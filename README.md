@@ -684,6 +684,144 @@ Tujuan dari pergantian urutan ini adalah agar beban trafik jaringan terbagi seca
       ```dig -x 192.238.1.4 @192.238.1.3```  
       <img width="1005" height="649" alt="image" src="https://github.com/user-attachments/assets/96bfc97c-b23c-4728-bb60-e4f529adf15b" />
 
+# 9. Mengonfigurasi Web Server Statis Apache pada node-node di Area Vault (obladi & desmond).
+
+Fitur utama yang diminta adalah Autoindex (directory listing) pada folder /arsip/. Saat folder /arsip/ diakses melalui browser atau HTTP tanpa adanya file index.html, Apache akan secara otomatis menampilkan daftar seluruh file dan sub-folder yang tersimpan di dalamnya.
+
+## Langka 1: Jalankan scripth /root/setup.sh berikut di node obladi
+
+```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    
+    # 1. Hostname & Network Interface
+    hostname obladi
+    echo "obladi" > /etc/hostname
+    
+    cat << 'NET' > /etc/network/interfaces
+    auto lo
+    iface lo inet loopback
+    
+    auto eth0
+    iface eth0 inet static
+        address 192.238.1.4
+        netmask 255.255.255.0
+        gateway 192.238.1.1
+    NET
+    
+    ifup -a 2>/dev/null || true
+    
+    # 2. Resolver DNS
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.238.1.2
+    nameserver 192.238.1.3
+    nameserver 192.168.122.1
+    RESOLV
+    
+    # 3. Install Apache2
+    apk update && apk add apache2 curl
+    
+    # 4. Buat Direktori /arsip/ dan File Sampel
+    mkdir -p /var/www/localhost/htdocs/arsip
+    echo "Dokumen Rahasia Vault - Server Obladi 01" > /var/www/localhost/htdocs/arsip/vault_data1.txt
+    echo "Laporan Keuangan K54 - Server Obladi 02" > /var/www/localhost/htdocs/arsip/laporan_obladi.pdf
+    
+    # Pastikan TIDAK ADA index.html agar autoindex berjalan
+    rm -f /var/www/localhost/htdocs/arsip/index.html 2>/dev/null || true
+    
+    # 5. Konfigurasi Autoindex (Directory Listing) pada Apache
+    cat << 'APACHE' > /etc/apache2/conf.d/arsip.conf
+    <Directory "/var/www/localhost/htdocs/arsip">
+        Options +Indexes +FollowSymLinks
+        AllowOverride None
+        Require all granted
+    </Directory>
+    APACHE
+    
+    # 6. Jalankan Service Apache
+    pkill httpd 2>/dev/null || true
+    httpd -k start
+    
+    # 7. Autostart GNS3 Docker
+    if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+        echo "pgrep httpd >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+    fi
+    if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+        echo "pgrep httpd >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+    fi
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+## Langkah 2: Konfigurasi di node Desmond
+Jalankan perintah scripth /root/setup.sh berikut di terminal node Desmond:
+
+```
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+
+# 1. Hostname & Network Interface
+hostname desmond
+echo "desmond" > /etc/hostname
+
+cat << 'NET' > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 192.238.1.5
+    netmask 255.255.255.0
+    gateway 192.238.1.1
+NET
+
+ifup -a 2>/dev/null || true
+
+# 2. Resolver DNS
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+
+# 3. Install Apache2
+apk update && apk add apache2 curl
+
+# 4. Buat Direktori /arsip/ dan File Sampel
+mkdir -p /var/www/localhost/htdocs/arsip
+echo "Dokumen Rahasia Vault - Server Desmond 01" > /var/www/localhost/htdocs/arsip/vault_data2.txt
+echo "Laporan Keuangan K54 - Server Desmond 02" > /var/www/localhost/htdocs/arsip/laporan_desmond.pdf
+
+# Pastikan TIDAK ADA index.html agar autoindex berjalan
+rm -f /var/www/localhost/htdocs/arsip/index.html 2>/dev/null || true
+
+# 5. Konfigurasi Autoindex (Directory Listing) pada Apache
+cat << 'APACHE' > /etc/apache2/conf.d/arsip.conf
+<Directory "/var/www/localhost/htdocs/arsip">
+    Options +Indexes +FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+APACHE
+
+# 6. Jalankan Service Apache
+pkill httpd 2>/dev/null || true
+httpd -k start
+
+# 7. Autostart GNS3 Docker
+if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+    echo "pgrep httpd >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+fi
+if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+    echo "pgrep httpd >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+fi
+EOF
+
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+
 
 
       
