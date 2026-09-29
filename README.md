@@ -395,6 +395,301 @@ Dari Langkah 2 dan 3 kita bisa melihat bahwa mekanisme Round-Robin Load Balancin
 Tujuan dari pergantian urutan ini adalah agar beban trafik jaringan terbagi secara merata dan seimbang antara server obladi (192.238.1.4) dan desmond (192.238.1.5).
 
 
+# 8. Membuat Reverse DNS Zone (PTR Record) pada DNS Master (prab) dan menariknya di DNS Slave (tedd).
+
+## Langkah 1
+1. Perbarui script setup di prab yang sudah ditambahkan Reverse Zone
+   ```
+   cat << 'EOF' > /root/setup.sh
+   #!/bin/bash
+
+   hostname prab
+   echo "prab" > /etc/hostname
+
+    cat << 'NET' > /etc/network/interfaces
+    auto lo
+    iface lo inet loopback
+    
+    auto eth0
+    iface eth0 inet static
+        address 192.238.1.2
+        netmask 255.255.255.0
+        gateway 192.238.1.1
+    NET
+    
+    ifup -a 2>/dev/null || true
+    
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.238.1.2
+    nameserver 192.238.1.3
+    nameserver 192.168.122.1
+    RESOLV
+    
+    apk update && apk add bind bind-tools
+    
+    # --- KONFIGURASI BIND MASTER ---
+    cat << 'NAMED' > /etc/bind/named.conf
+    options {
+        directory "/var/bind";
+        allow-query { any; };
+        auth-nxdomain no;
+        listen-on-v6 { none; };
+        forwarders {
+            192.168.122.1;
+        };
+    };
+    
+    // Forward Zone k54.com
+    zone "k54.com" IN {
+        type master;
+        file "/var/bind/k54.com.zone";
+        allow-transfer { 192.238.1.3; };
+        notify yes;
+        also-notify { 192.238.1.3; };
+    };
+    
+    // Reverse Zone Subnet 1 (Prab, Tedd, Vault, Core)
+    zone "1.238.192.in-addr.arpa" IN {
+        type master;
+        file "/var/bind/1.238.192.zone";
+        allow-transfer { 192.238.1.3; };
+        notify yes;
+        also-notify { 192.238.1.3; };
+    };
+    
+    // Reverse Zone Subnet 2 (Abbey)
+    zone "2.238.192.in-addr.arpa" IN {
+        type master;
+        file "/var/bind/2.238.192.zone";
+        allow-transfer { 192.238.1.3; };
+        notify yes;
+        also-notify { 192.238.1.3; };
+    };
+    
+    // Reverse Zone Subnet 3 (Penny)
+    zone "3.238.192.in-addr.arpa" IN {
+        type master;
+        file "/var/bind/3.238.192.zone";
+        allow-transfer { 192.238.1.3; };
+        notify yes;
+        also-notify { 192.238.1.3; };
+    };
+    NAMED
+    
+    # --- FORWARD ZONE FILE ---
+    cat << 'ZONE' > /var/bind/k54.com.zone
+    $TTL 1D
+    @   IN  SOA prab.k54.com. root.k54.com. (
+                2026092903
+                1D 1H 1W 1D )
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    @       IN  A   192.238.3.2
+    
+    prab    IN  A   192.238.1.2
+    tedd    IN  A   192.238.1.3
+    alpha   IN  A   192.238.4.2
+    beta    IN  A   192.238.4.3
+    gamma   IN  A   192.238.4.4
+    delta   IN  A   192.238.5.2
+    epsilon IN  A   192.238.5.3
+    abbey   IN  A   192.238.2.2
+    penny   IN  A   192.238.3.2
+    obladi  IN  A   192.238.1.4
+    desmond IN  A   192.238.1.5
+    oblada  IN  A   192.238.1.6
+    molly   IN  A   192.238.1.7
+    
+    vault   IN  A   192.238.1.4
+    vault   IN  A   192.238.1.5
+    core    IN  A   192.238.1.6
+    core    IN  A   192.238.1.7
+    
+    www     IN  CNAME penny.k54.com.
+    static  IN  CNAME abbey.k54.com.
+    ZONE
+    
+    # --- REVERSE ZONE FILE SUBNET 1 ---
+    cat << 'REV1' > /var/bind/1.238.192.zone
+    $TTL 1D
+    @   IN  SOA prab.k54.com. root.k54.com. (
+                2026092903
+                1D 1H 1W 1D )
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    
+    2       IN  PTR prab.k54.com.
+    3       IN  PTR tedd.k54.com.
+    4       IN  PTR obladi.k54.com.
+    5       IN  PTR desmond.k54.com.
+    6       IN  PTR oblada.k54.com.
+    7       IN  PTR molly.k54.com.
+    REV1
+    
+    # --- REVERSE ZONE FILE SUBNET 2 ---
+    cat << 'REV2' > /var/bind/2.238.192.zone
+    $TTL 1D
+    @   IN  SOA prab.k54.com. root.k54.com. (
+                2026092903
+                1D 1H 1W 1D )
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    
+    2       IN  PTR abbey.k54.com.
+    REV2
+    
+    # --- REVERSE ZONE FILE SUBNET 3 ---
+    cat << 'REV3' > /var/bind/3.238.192.zone
+    $TTL 1D
+    @   IN  SOA prab.k54.com. root.k54.com. (
+                2026092903
+                1D 1H 1W 1D )
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    
+    2       IN  PTR penny.k54.com.
+    REV3
+    
+    chown -R named:named /var/bind
+    pkill named 2>/dev/null || true
+    named -u named
+    
+    if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+        echo "pgrep named >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+    fi
+    if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+        echo "pgrep named >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+    fi
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+   ```
+
+## Langkah 2
+1. Perbarui script node di tedd agar bisa menarik reverse zone dari prab:
+
+   ```
+   cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    
+    hostname tedd
+    echo "tedd" > /etc/hostname
+    
+    cat << 'NET' > /etc/network/interfaces
+    auto lo
+    iface lo inet loopback
+    
+    auto eth0
+    iface eth0 inet static
+        address 192.238.1.3
+        netmask 255.255.255.0
+        gateway 192.238.1.1
+    NET
+    
+    ifup -a 2>/dev/null || true
+    
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.238.1.2
+    nameserver 192.238.1.3
+    nameserver 192.168.122.1
+    RESOLV
+    
+    apk update && apk add bind bind-tools
+    
+    mkdir -p /var/bind/slaves
+    chown -R named:named /var/bind
+    chmod 777 /var/bind/slaves
+    
+    # --- KONFIGURASI SLAVE REVERSE ZONES ---
+    cat << 'NAMED' > /etc/bind/named.conf
+    options {
+        directory "/var/bind";
+        allow-query { any; };
+        auth-nxdomain no;
+        listen-on-v6 { none; };
+        forwarders {
+            192.168.122.1;
+        };
+    };
+    
+    zone "k54.com" IN {
+        type slave;
+        file "/var/bind/slaves/k54.com.zone";
+        masters { 192.238.1.2; };
+    };
+    
+    zone "1.238.192.in-addr.arpa" IN {
+        type slave;
+        file "/var/bind/slaves/1.238.192.zone";
+        masters { 192.238.1.2; };
+    };
+    
+    zone "2.238.192.in-addr.arpa" IN {
+        type slave;
+        file "/var/bind/slaves/2.238.192.zone";
+        masters { 192.238.1.2; };
+    };
+    
+    zone "3.238.192.in-addr.arpa" IN {
+        type slave;
+        file "/var/bind/slaves/3.238.192.zone";
+        masters { 192.238.1.2; };
+    };
+    NAMED
+    
+    pkill named 2>/dev/null || true
+    named -u named
+    
+    if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+        echo "pgrep named >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+    fi
+    if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+        echo "pgrep named >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+    fi
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+   ```
+
+   ## Langkah 3: Pengujian Verifikasi Reverse Lookup
+   Lakukan perintah pengujian ini di node client:
+
+   1. Uji Reverse Lookup Abbey
+      `host 192.238.2.2`  
+      <img width="799" height="164" alt="image" src="https://github.com/user-attachments/assets/3c9fac57-1f2d-4740-90a9-55b4fa8c448c" />
+
+   2. Uji Reverse Lookup Penny
+      `host 192.238.3.2`
+      <img width="804" height="127" alt="image" src="https://github.com/user-attachments/assets/26608c89-00e1-4e74-ae8c-db4377d178e9" />
+
+   3. Uji Reverse Lookup Area Vault ( obladi & desmond )
+      ```
+        host 192.238.1.4
+        host 192.238.1.5
+      ```
+      <img width="873" height="175" alt="image" src="https://github.com/user-attachments/assets/c047fae9-95e2-47d0-9143-de6bc4216034" />
+
+   4. Uji reverse Lookup Area Core ( oblada & molly)
+      ```
+       host 192.238.1.6
+       host 192.238.1.7
+      ```
+      <img width="887" height="159" alt="image" src="https://github.com/user-attachments/assets/539119bf-5550-4d8d-9d4f-8e78fa9cea59" />
+
+   5. Uji Respon Authoritative dari Slave
+      ```dig -x 192.238.1.4 @192.238.1.3```  
+      <img width="1005" height="649" alt="image" src="https://github.com/user-attachments/assets/96bfc97c-b23c-4728-bb60-e4f529adf15b" />
+
+
+
+      
+
+
+
 
 
    
