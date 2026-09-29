@@ -1079,6 +1079,25 @@ EOF
 chmod +x /root/setup.sh && bash /root/setup.sh
 ```
 
+## Langkah 3
+Melakukan pengujian menggunakan nama domain/hostname, bukan IP address. Buka terminal node klien, dan pastikan paket curl terpasang (`apk add curl`) lalu jalankan pengujian ini:
+
+1. Uji akses via Hostname Round-Robin vault (`[vault.k54.com/arsip/](https://vault.k54.com/arsip/)`):
+
+   `curl -s http://vault.k54.com/arsip/`
+
+   <img width="1061" height="436" alt="image" src="https://github.com/user-attachments/assets/1dadfdb2-9150-4ec5-8a59-2d23957cd50f" />
+
+2. Uji Akses via Hostname Masing-Masing Node Server:
+
+   ```
+    curl -s http://obladi.k54.com/arsip/
+    curl -s http://desmond.k54.com/arsip/
+   ```
+
+   <img width="1060" height="626" alt="image" src="https://github.com/user-attachments/assets/93dd696c-2442-44be-a11a-98e24ab2f491" />  
+   <img width="1063" height="205" alt="image" src="https://github.com/user-attachments/assets/b8bb6916-4a2c-4000-a35d-fd78cd53f8de" />  
+
 
 
 
