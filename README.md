@@ -2,5 +2,5 @@
 
 | Nama                 | NRP        |
 |----------------------|------------|
+|  Viko Rizky Fauzan | 5027251017   |
 | Sean Arthur Tamajaya | 5027251050 |
-| Viko Rizky Fauzan    | 5027251017 |
