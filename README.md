@@ -181,9 +181,65 @@ ping -c 3 192.238.1.2
 <img width="546" height="363" alt="Screenshot 2026-09-29 at 16 35 24" src="https://github.com/user-attachments/assets/1bcdcc5b-6f26-4c6d-aa80-12b7014a1eda" />
 <img width="541" height="361" alt="Screenshot 2026-09-29 at 16 36 02" src="https://github.com/user-attachments/assets/521341a8-ad74-4b06-b1bc-4f35b052c808" />
 
-
 ## 6. Kesimpulan
 
 - `rootkit` berhasil menjadi router pusat yang menghubungkan lima gerbang (Switch) ke lima subnet `192.238.X.0/24` dan satu jalur keluar ke NAT.
 - Seluruh Entitas memperoleh IP statis dan *default gateway* menuju `rootkit` pada subnet masing-masing.
 - Pengujian membuktikan konektivitas ke internet (`8.8.8.8`, `1.1.1.1`) dan routing antar subnet (`alpha` → `delta`, `alpha` → `prab`) berhasil dengan 0% packet loss.
+
+# 6. Memastikan zona transfer dari DNS master (prab) ke DNS slave (tedd) berjalan dengan serial SOA di kedua node identik.
+
+### Langkah 1   
+1. Memastikan konfigurasi Zone transfer di Master (prab) dan Slave (tedd).
+   - Pastikan di dalam /etc/bind/named.conf blok zone "k54.com" ada parameter dibawah ini:
+
+   `
+     allow-transfer { 192.238.1.3; };
+     notify yes;
+     also-notify { 192.238.1.3; };
+   `
+   <img width="680" alt="image" src="https://github.com/user-attachments/assets/135a21a1-b33b-4f01-a3e4-78d9cc48d661" />
+
+2. Di tedd pastikan direktori penampug Zona slave sudah ada dan memiliki hak akses ke user named.
+
+   `
+      mkdir -p /var/bind/slaves 
+      chown -R named:named /var/bind
+      chmod 777 /var/bind/slaves
+   `
+
+### Langkah 2
+1. Cek Serial SOA di DNS Mater (prab)
+   
+   ` dig SOA k54.com @192.238.1.2 `
+
+   <img width="680" alt="image" src="https://github.com/user-attachments/assets/f2d8f884-2b2d-4645-b6df-1ba9c2a6689d" />
+
+2. Cek Serial SOA di DNS Slave (tedd)
+
+   ` dig SOA k54.com @192.238.1.3 `
+
+   <img width="680" alt="image" src="https://github.com/user-attachments/assets/0fb9748c-33e4-474e-83b0-cf97ffd998cf" />
+
+Disitu bisa kita lihat Serias SOA di DNS Mater dengan DNS Slave itu sama yaitu: 2026092901
+
+3. Cek File Salinan Zona Fisik di Node di Slave (tedd)
+
+   ` ls -la /var/bind/slaves/ `
+
+   <img width="820" height="142" alt="image" src="https://github.com/user-attachments/assets/02f428c0-9ae7-4c85-8b3c-74155ece0aff" />
+
+   Disitu bisa terlihat bahwa salinan zona terbaru dari prab telah diterima oleh tedd, melalui munculnya file k54.com.zone.
+
+
+### Langkah 3 : Pembuktian
+1. Buka terminal prab, coba edit nomor serial di /var/bind/k54.com.zone dari 2026092901 menjadi 2026092902.
+2. Restard/reload BIND di prab
+   ` pkill named && named -u named `
+3. Langsung cek ulang di node klien.
+
+   <img width="680" alt="image" src="https://github.com/user-attachments/assets/0130bb77-3ec5-4020-8f54-fbe6aa548bf5" />
+
+   <img width="680" alt="image" src="https://github.com/user-attachments/assets/e85cb722-4a00-4f4b-beb4-94862827ee29" />
+
+Bisa terlihat bahwa SOA di node beta telah berubah juga menjadi 2026092902.
