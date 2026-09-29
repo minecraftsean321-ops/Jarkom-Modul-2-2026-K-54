@@ -1096,7 +1096,231 @@ Melakukan pengujian menggunakan nama domain/hostname, bukan IP address. Buka ter
    ```
 
    <img width="1060" height="626" alt="image" src="https://github.com/user-attachments/assets/93dd696c-2442-44be-a11a-98e24ab2f491" />  
-   <img width="1063" height="205" alt="image" src="https://github.com/user-attachments/assets/b8bb6916-4a2c-4000-a35d-fd78cd53f8de" />  
+   <img width="1063" height="205" alt="image" src="https://github.com/user-attachments/assets/b8bb6916-4a2c-4000-a35d-fd78cd53f8de" />
+
+
+# 10. Mengonfigurasi Web Server Dinamis (Nginx + PHP-FPM) pada node-node Area Core (oblada & molly). 
+
+Spesifikasi utama yang harus dipenuhi:
+1. Menggunakan Nginx dan PHP-FPM.
+2. Membuat halaman Beranda (index.php) dan Profil (profil.php).
+3. Menerapkan aturan URL Rewrite (Clean URL) pada Nginx, sehingga halaman profil dapat diakses melalui URL /profil tanpa ekstensi .php.
+4. Pengujian wajib diakses menggunakan hostname core.k54.com (serta oblada.k54.com dan molly.k54.com).
+
+## Langkah 1
+1. Melakukan konfigurasi di node oblada menggunakan scripth di bawah ini:
+
+   ```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    
+    # 1. Hostname & Network Interface
+    hostname oblada
+    echo "oblada" > /etc/hostname
+    
+    cat << 'NET' > /etc/network/interfaces
+    auto lo
+    iface lo inet loopback
+    
+    auto eth0
+    iface eth0 inet static
+        address 192.238.1.6
+        netmask 255.255.255.0
+        gateway 192.238.1.1
+    NET
+    
+    ifup -a 2>/dev/null || true
+    
+    # 2. Resolver DNS
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.238.1.2
+    nameserver 192.238.1.3
+    nameserver 192.168.122.1
+    RESOLV
+    
+    # 3. Install Nginx & PHP-FPM (Paket Generik Alpine)
+    apk update && apk add nginx php-fpm php curl
+    
+    # 4. Buat Direktori Web Root
+    mkdir -p /var/www/html /etc/nginx/http.d
+    
+    # 5. Buat File Application (Beranda & Profil)
+    cat << 'PHP' > /var/www/html/index.php
+    <?php
+    echo "<h1>Selamat Datang di Beranda Core (Oblada)</h1>";
+    echo "<p>Server Hostname: " . gethostname() . "</p>";
+    ?>
+    PHP
+    
+    cat << 'PHP' > /var/www/html/profil.php
+    <?php
+    echo "<h1>Halaman Profil Server Core (Oblada)</h1>";
+    echo "<p>Ini adalah halaman profil dengan URL Bersih (Clean URL)!</p>";
+    echo "<p>Node: " . gethostname() . " (" . $_SERVER['SERVER_ADDR'] . ")</p>";
+    ?>
+    PHP
+    
+    chown -R nginx:nginx /var/www/html 2>/dev/null || true
+    
+    # 6. Konfigurasi Nginx Server Block + Clean URL Rewrite
+    cat << 'NGINX' > /etc/nginx/http.d/default.conf
+    server {
+        listen 80;
+        server_name core.k54.com oblada.k54.com;
+    
+        root /var/www/html;
+        index index.php index.html;
+    
+        # URL Rewrite (Clean URL)
+        location / {
+            try_files $uri $uri/ $uri.php?$args;
+        }
+    
+        # Handler PHP-FPM
+        location ~ \.php$ {
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+    }
+    NGINX
+    
+    # 7. Jalankan Service PHP-FPM & Nginx
+    pkill php-fpm 2>/dev/null || true
+    pkill nginx 2>/dev/null || true
+    
+    php-fpm 2>/dev/null || php-fpm83 2>/dev/null || php-fpm82 2>/dev/null || true
+    nginx
+    
+    # 8. Autostart GNS3 Docker
+    if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+        echo "pgrep nginx >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+    fi
+    if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+        echo "pgrep nginx >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+    fi
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+   ```
+
+   Scripth dibawah ini digunakan jika port 80 telah digunakan sebelumnya:
+
+   ```
+    pkill -9 nginx 2>/dev/null
+    pkill -9 httpd 2>/dev/null
+    sleep 1
+    nginx
+   ```
+
+
+## Langkah 2
+Konfigurasi scripth di node Molly:
+
+
+```
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+
+# 1. Hostname & Network Interface
+hostname molly
+echo "molly" > /etc/hostname
+
+cat << 'NET' > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 192.238.1.7
+    netmask 255.255.255.0
+    gateway 192.238.1.1
+NET
+
+ifup -a 2>/dev/null || true
+
+# 2. Resolver DNS
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+
+# 3. Install Nginx & PHP-FPM (Paket Generik Alpine)
+apk update && apk add nginx php-fpm php curl
+
+# 4. Buat Direktori Web Root
+mkdir -p /var/www/html /etc/nginx/http.d
+
+# 5. Buat File Application (Beranda & Profil)
+cat << 'PHP' > /var/www/html/index.php
+<?php
+echo "<h1>Selamat Datang di Beranda Core (Molly)</h1>";
+echo "<p>Server Hostname: " . gethostname() . "</p>";
+?>
+PHP
+
+cat << 'PHP' > /var/www/html/profil.php
+<?php
+echo "<h1>Halaman Profil Server Core (Molly)</h1>";
+echo "<p>Ini adalah halaman profil dengan URL Bersih (Clean URL)!</p>";
+echo "<p>Node: " . gethostname() . " (" . $_SERVER['SERVER_ADDR'] . ")</p>";
+?>
+PHP
+
+chown -R nginx:nginx /var/www/html 2>/dev/null || true
+
+# 6. Konfigurasi Nginx Server Block + Clean URL Rewrite
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+server {
+    listen 80;
+    server_name core.k54.com molly.k54.com;
+
+    root /var/www/html;
+    index index.php index.html;
+
+    # URL Rewrite (Clean URL)
+    location / {
+        try_files $uri $uri/ $uri.php?$args;
+    }
+
+    # Handler PHP-FPM
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}
+NGINX
+
+# 7. Jalankan Service PHP-FPM & Nginx
+pkill php-fpm 2>/dev/null || true
+pkill nginx 2>/dev/null || true
+
+php-fpm 2>/dev/null || php-fpm83 2>/dev/null || php-fpm82 2>/dev/null || true
+nginx
+
+# 8. Autostart GNS3 Docker
+if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+    echo "pgrep nginx >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+fi
+if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+    echo "pgrep nginx >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+fi
+EOF
+
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+
+## Langkah pengujian dari client
+
+1. Uji halaman 
+
+   
+
 
 
 
