@@ -211,13 +211,13 @@ ping -c 3 192.238.1.2
 ### Langkah 2
 1. Cek Serial SOA di DNS Mater (prab)
    
-   ` dig SOA k54.com @192.238.1.2 `
+   ``` dig SOA k54.com @192.238.1.2 ```
 
    <img width="680" alt="image" src="https://github.com/user-attachments/assets/f2d8f884-2b2d-4645-b6df-1ba9c2a6689d" />
 
 2. Cek Serial SOA di DNS Slave (tedd)
 
-   ` dig SOA k54.com @192.238.1.3 `
+   ``` dig SOA k54.com @192.238.1.3 ```
 
    <img width="680" alt="image" src="https://github.com/user-attachments/assets/0fb9748c-33e4-474e-83b0-cf97ffd998cf" />
 
@@ -243,3 +243,160 @@ Disitu bisa kita lihat Serias SOA di DNS Mater dengan DNS Slave itu sama yaitu: 
    <img width="680" alt="image" src="https://github.com/user-attachments/assets/e85cb722-4a00-4f4b-beb4-94862827ee29" />
 
 Bisa terlihat bahwa SOA di node beta telah berubah juga menjadi 2026092902.
+
+# 7. Menambahkan beberapa Record DNS baru di zona k54.com
+
+## Langkah 1
+Memperbarui script setup yang ada di node prab:
+
+```
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+
+# 1. Hostname
+hostname prab
+echo "prab" > /etc/hostname
+
+# 2. Network Interface
+cat << 'NET' > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+    address 192.238.1.2
+    netmask 255.255.255.0
+    gateway 192.238.1.1
+NET
+
+ifup -a 2>/dev/null || true
+
+# 3. Resolver
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+
+# 4. Install BIND DNS
+apk update && apk add bind bind-tools
+
+# 5. Konfigurasi BIND Master
+cat << 'NAMED' > /etc/bind/named.conf
+options {
+    directory "/var/bind";
+    allow-query { any; };
+    auth-nxdomain no;
+    listen-on-v6 { none; };
+    forwarders {
+        192.168.122.1;
+    };
+};
+
+zone "k54.com" IN {
+    type master;
+    file "/var/bind/k54.com.zone";
+    allow-transfer { 192.238.1.3; };
+    notify yes;
+    also-notify { 192.238.1.3; };
+};
+NAMED
+
+# 6. File Zona k54.com (DENGAN TAMBAHAN SOAL 7)
+cat << 'ZONE' > /var/bind/k54.com.zone
+$TTL 1D
+@   IN  SOA prab.k54.com. root.k54.com. (
+            2026092902 ; Serial dinaikkan ke 02
+            1D         ; Refresh
+            1H         ; Retry
+            1W         ; Expire
+            1D )       ; Minimum TTL
+
+; Record Name Server
+@       IN  NS  prab.k54.com.
+@       IN  NS  tedd.k54.com.
+
+; Record A Apex
+@       IN  A   192.238.3.2
+
+; Record A Name Server
+prab    IN  A   192.238.1.2
+tedd    IN  A   192.238.1.3
+
+; Record A Node Utama
+alpha   IN  A   192.238.4.2
+beta    IN  A   192.238.4.3
+gamma   IN  A   192.238.4.4
+delta   IN  A   192.238.5.2
+epsilon IN  A   192.238.5.3
+abbey   IN  A   192.238.2.2
+penny   IN  A   192.238.3.2
+obladi  IN  A   192.238.1.4
+desmond IN  A   192.238.1.5
+oblada  IN  A   192.238.1.6
+molly   IN  A   192.238.1.7
+
+; --- SOAL 7: A Record Round-Robin ---
+vault   IN  A   192.238.1.4
+vault   IN  A   192.238.1.5
+
+core    IN  A   192.238.1.6
+core    IN  A   192.238.1.7
+
+; --- SOAL 7: CNAME Record ---
+www     IN  CNAME penny.k54.com.
+static  IN  CNAME abbey.k54.com.
+ZONE
+
+chown -R named:named /var/bind
+pkill named 2>/dev/null || true
+named -u named
+
+# 7. AUTOSTART GNS3 DOCKER
+if ! grep -q "setup.sh" /root/.bashrc 2>/dev/null; then
+    echo "pgrep named >/dev/null || /bin/bash /root/setup.sh" >> /root/.bashrc
+fi
+if ! grep -q "setup.sh" /etc/profile 2>/dev/null; then
+    echo "pgrep named >/dev/null || /bin/bash /root/setup.sh" >> /etc/profile
+fi
+EOF
+
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+## Langkah 2: Verifikasi dari Client
+
+1. Uji `vault.k54.com`:      
+   ``` nslookup vault.k54.com```    
+   <img width="458" height="238" alt="image" src="https://github.com/user-attachments/assets/5474bfd6-6a71-4c0e-b7aa-1fe7d8b7c1e0" />
+
+2. Uji `core.k54.com`:  
+   ``` nslookup core.k54.com ```  
+   <img width="430" height="230" alt="image" src="https://github.com/user-attachments/assets/47bad88d-25bb-4af2-a2ec-410dbd74af0a" />
+
+3. Uji `[www.k54.com](https://www.k54.com)`:  
+   ```nslookup www.k54.com```  
+   <img width="690" height="217" alt="image" src="https://github.com/user-attachments/assets/6dfd118e-1a06-4f27-9704-eec7eb1243f2" />
+
+4. Uji `static.k54.com`:  
+   ```nslookup static.k54.com```  
+   <img width="676" height="196" alt="image" src="https://github.com/user-attachments/assets/a80b190e-39d7-4727-a405-48b1968b8909" />
+
+## Langkah 3: Tes di node lain untuk menguji konsistensi jawaban DNS:
+
+<img width="680" alt="image" src="https://github.com/user-attachments/assets/2600bc49-ef2c-4089-aa87-d4e65c850d3e" />
+<img width="680" alt="image" src="https://github.com/user-attachments/assets/482a0762-05ec-46be-a20b-e0d428982440" />
+
+Dari Langkah 2 dan 3 kita bisa melihat bahwa mekanisme Round-Robin Load Balancing nya bekerja. 
+
+- Permintaan Pertama (alpha): BIND memberikan urutan 192.238.1.5 terlebih dahulu, lalu 192.238.1.4. 
+- Permintaan Kedua (beta): BIND memutar urutannya menjadi 192.238.1.4 terlebih dahulu, lalu 192.238.1.5.
+
+Tujuan dari pergantian urutan ini adalah agar beban trafik jaringan terbagi secara merata dan seimbang antara server obladi (192.238.1.4) dan desmond (192.238.1.5).
+
+
+
+
+   
+
+   
