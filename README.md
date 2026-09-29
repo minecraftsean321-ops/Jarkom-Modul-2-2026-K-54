@@ -1,4 +1,4 @@
-# Jarkom-Modul-2-2026-K-54
+<img width="539" height="359" alt="Screenshot 2026-09-29 at 21 29 44" src="https://github.com/user-attachments/assets/359d9934-b202-48b7-a58d-a4e33323349e" /># Jarkom-Modul-2-2026-K-54
 
 | Nama                 | NRP        |
 |----------------------|------------|
@@ -444,7 +444,201 @@ Ekspektasi: `prab.k54.com` menjawab `192.238.1.2` dan `tedd.k54.com` menjawab `1
 <img width="537" height="311" alt="Screenshot 2026-09-29 at 17 48 46" src="https://github.com/user-attachments/assets/0afc9902-3cbb-4b34-b33d-923986b41190" />
 
 
+## Soal 5
+ 
+"Entitas tanpa identitas adalah anomali," pesan Rootkit. Tugasnya:
+ 
+- Menamai semua Entitas (*hostname*) sesuai glosarium: `rootkit`, `alpha`, `beta`, `gamma`, `delta`, `epsilon`, `prab`, `tedd`, `abbey`, `penny`, `obladi`, `desmond`, `oblada`, `molly`. Verifikasi bahwa setiap host mengenali hostname tersebut secara *system-wide*.
+- Membuat domain untuk masing-masing node sesuai namanya (contoh: `alpha.k54.com`) dan meng-*assign* IP masing-masing.
+- Pengecualian untuk node yang bertanggung jawab atas `prab` dan `tedd`: record keduanya sudah dibuat pada Soal 4, sehingga tidak perlu dibuat ulang.
+## 2. Rencana
+ 
+| Node | Hostname | Domain (FQDN) | IP |
+|---|---|---|---|
+| `alpha` | `alpha` | `alpha.k54.com` | `192.238.4.2` |
+| `beta` | `beta` | `beta.k54.com` | `192.238.4.3` |
+| `gamma` | `gamma` | `gamma.k54.com` | `192.238.4.4` |
+| `delta` | `delta` | `delta.k54.com` | `192.238.5.2` |
+| `epsilon` | `epsilon` | `epsilon.k54.com` | `192.238.5.3` |
+| `abbey` | `abbey` | `abbey.k54.com` | `192.238.2.2` |
+| `penny` | `penny` | `penny.k54.com` | `192.238.3.2` |
+| `obladi` | `obladi` | `obladi.k54.com` | `192.238.1.4` |
+| `desmond` | `desmond` | `desmond.k54.com` | `192.238.1.5` |
+| `oblada` | `oblada` | `oblada.k54.com` | `192.238.1.6` |
+| `molly` | `molly` | `molly.k54.com` | `192.238.1.7` |
+| `prab` | `prab` | `prab.k54.com` (sudah ada, Soal 4) | `192.238.1.2` |
+| `tedd` | `tedd` | `tedd.k54.com` (sudah ada, Soal 4) | `192.238.1.3` |
+| `rootkit` | `rootkit` | - | router (banyak interface) |
+ 
+## 3. Langkah Pengerjaan
+ 
+### Langkah 1 - Tambah A record semua node di zona (`prab`, DNS Master)
+ 
+Tambahkan record berikut ke `/var/bind/k54.com.zone` di `prab`. Record `prab` dan `tedd` tidak ditambahkan lagi karena sudah ada.
+ 
+```text
+; A Record Seluruh Subdomain Node (Soal 5)
+alpha   IN  A   192.238.4.2
+beta    IN  A   192.238.4.3
+gamma   IN  A   192.238.4.4
+delta   IN  A   192.238.5.2
+epsilon IN  A   192.238.5.3
+abbey   IN  A   192.238.2.2
+penny   IN  A   192.238.3.2
+obladi  IN  A   192.238.1.4
+desmond IN  A   192.238.1.5
+oblada  IN  A   192.238.1.6
+molly   IN  A   192.238.1.7
+```
+ 
+Cara menambahkannya lewat terminal `prab`:
+ 
+```bash
+cat << 'ZONE' >> /var/bind/k54.com.zone
+ 
+; A Record Seluruh Subdomain Node (Soal 5)
+alpha   IN  A   192.238.4.2
+beta    IN  A   192.238.4.3
+gamma   IN  A   192.238.4.4
+delta   IN  A   192.238.5.2
+epsilon IN  A   192.238.5.3
+abbey   IN  A   192.238.2.2
+penny   IN  A   192.238.3.2
+obladi  IN  A   192.238.1.4
+desmond IN  A   192.238.1.5
+oblada  IN  A   192.238.1.6
+molly   IN  A   192.238.1.7
+ZONE
+```
+ 
+Isi akhir file zona (bagian record) setelah ditambahkan:
+ 
+```text
+@        IN  A   192.238.3.2
+ 
+prab     IN  A   192.238.1.2
+tedd     IN  A   192.238.1.3
+alpha    IN  A   192.238.4.2
+beta     IN  A   192.238.4.3
+gamma    IN  A   192.238.4.4
+delta    IN  A   192.238.5.2
+epsilon  IN  A   192.238.5.3
+abbey    IN  A   192.238.2.2
+penny    IN  A   192.238.3.2
+obladi   IN  A   192.238.1.4
+desmond  IN  A   192.238.1.5
+oblada   IN  A   192.238.1.6
+molly    IN  A   192.238.1.7
+```
+ 
+**Naikkan serial SOA dan muat ulang BIND.** Tanpa kenaikan serial, `tedd` tidak akan menarik versi zona yang baru.
+ 
+```bash
+# Ubah serial 2026092901 menjadi 2026092902
+sed -i 's/2026092901/2026092902/' /var/bind/k54.com.zone
+ 
+# Muat ulang named (cara yang sama seperti pada Soal 4)
+pkill named 2>/dev/null || true
+named -u named -c /etc/bind/named.conf
+```
+ 
+Karena `notify yes` aktif, `tedd` akan diberi tahu dan menarik zona terbaru secara otomatis.
+ 
+### Langkah 2 - Atur hostname system-wide di seluruh node
+ 
+Jalankan perintah di terminal **masing-masing node**. `hostname` mengubah nama pada sesi berjalan, sedangkan `/etc/hostname` membuatnya permanen setelah restart.
+ 
+```bash
+# Format umum (ganti NAMA sesuai node)
+hostname NAMA && echo "NAMA" > /etc/hostname
+```
+ 
+| Di node | Perintah |
+|---|---|
+| `alpha` | `hostname alpha && echo "alpha" > /etc/hostname` |
+| `beta` | `hostname beta && echo "beta" > /etc/hostname` |
+| `gamma` | `hostname gamma && echo "gamma" > /etc/hostname` |
+| `delta` | `hostname delta && echo "delta" > /etc/hostname` |
+| `epsilon` | `hostname epsilon && echo "epsilon" > /etc/hostname` |
+| `abbey` | `hostname abbey && echo "abbey" > /etc/hostname` |
+| `penny` | `hostname penny && echo "penny" > /etc/hostname` |
+| `obladi` | `hostname obladi && echo "obladi" > /etc/hostname` |
+| `desmond` | `hostname desmond && echo "desmond" > /etc/hostname` |
+| `oblada` | `hostname oblada && echo "oblada" > /etc/hostname` |
+| `molly` | `hostname molly && echo "molly" > /etc/hostname` |
+| `prab` | `hostname prab && echo "prab" > /etc/hostname` |
+| `tedd` | `hostname tedd && echo "tedd" > /etc/hostname` |
+| `rootkit` | `hostname rootkit && echo "rootkit" > /etc/hostname` |
+ 
+## 4. Pengujian
+ 
+> Blok output di bawah adalah hasil yang seharusnya muncul. Tempelkan screenshot output aktual dari terminalmu di bagian bertanda **[Screenshot]**.
+ 
+### 4.1 Tes hostname system-wide (di masing-masing node)
+ 
+Jalankan di node yang ingin diuji (mis. `alpha`, `beta`, `penny`, dst.):
+ 
+```bash
+hostname
+```
+ 
+Ekspektasi: output sesuai nama node, misalnya di `alpha` tampil `alpha`.
+ 
+<img width="541" height="359" alt="Screenshot 2026-09-29 at 21 22 31" src="https://github.com/user-attachments/assets/6d70bc0b-c6be-4d0b-9205-4b0927a5c638" />
 
+ 
+### 4.2 Tes resolusi DNS subdomain node (dari klien, mis. `alpha`)
+ 
+Mengecek apakah DNS master (`prab`) dan slave (`tedd`) sudah mengenali domain seluruh node.
+ 
+```bash
+# Klien sayap kiri & kanan
+nslookup alpha.k54.com
+nslookup beta.k54.com
+nslookup delta.k54.com
+ 
+# Gerbang penyaring (reverse proxy)
+nslookup abbey.k54.com
+nslookup penny.k54.com
+ 
+# Web server (repository)
+nslookup obladi.k54.com
+nslookup desmond.k54.com
+nslookup oblada.k54.com
+nslookup molly.k54.com
+```
+ 
+Ekspektasi: setiap query menjawab IP sesuai tabel rencana, misalnya `alpha.k54.com` menjawab `192.238.4.2` dan `molly.k54.com` menjawab `192.238.1.7`.
+ 
+<img width="538" height="360" alt="Screenshot 2026-09-29 at 21 23 15" src="https://github.com/user-attachments/assets/4fdee3de-fc81-455c-97e0-e4de7c27f3af" />
+<img width="539" height="351" alt="Screenshot 2026-09-29 at 21 22 58" src="https://github.com/user-attachments/assets/e0b0acf8-33d6-40c4-be7d-c99c1c6cbfe0" />
+
+ 
+### 4.3 Tes ping menggunakan nama domain (dari `alpha`)
+ 
+```bash
+ping -c 2 delta.k54.com
+ping -c 2 penny.k54.com
+```
+ 
+Ekspektasi: nama di-resolve ke `192.238.5.2` (delta) dan `192.238.3.2` (penny), lalu paket ICMP dibalas tanpa *packet loss*. Ini sekaligus membuktikan resolver dan routing internal via `rootkit` berjalan.
+ 
+<img width="542" height="360" alt="Screenshot 2026-09-29 at 21 28 27" src="https://github.com/user-attachments/assets/e710302a-f8e0-4365-82bb-ba227c0f4f39" />
+
+ 
+### 4.4 Tes zona di slave (tambahan)
+ 
+Memastikan `tedd` sudah menarik record baru dari `prab`:
+ 
+```bash
+dig @192.238.1.3 alpha.k54.com
+```
+ 
+Ekspektasi: jawaban `192.238.4.2` dengan flag `aa`.
+
+<img width="538" height="345" alt="Screenshot 2026-09-29 at 21 30 13" src="https://github.com/user-attachments/assets/80d6d84a-7a8b-453e-84f6-c9eef36d25ac" />
+
+ 
 # 6. Memastikan zona transfer dari DNS master (prab) ke DNS slave (tedd) berjalan dengan serial SOA di kedua node identik.
 
 ### Langkah 1   
