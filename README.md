@@ -1317,7 +1317,33 @@ chmod +x /root/setup.sh && bash /root/setup.sh
 
 ## Langkah pengujian dari client
 
-1. Uji halaman 
+1. Daftarkan Mapping Hostname Core ke /etc/hosts di node yang ingin diuji
+
+   ```
+   # 1. Tambahkan Mapping Hostname Core ke /etc/hosts
+    echo "192.238.1.6 core.k54.com" >> /etc/hosts
+    echo "192.238.1.7 core.k54.com" >> /etc/hosts
+    
+    # 2. Cek apakah hostname terdaftar
+    ping -c 2 core.k54.com
+   ```
+
+2. Uji halaman Beranda via Hostname Round-Robin Core
+   ```wget -qO- http://core.k54.com/```
+   <img width="1060" height="88" alt="image" src="https://github.com/user-attachments/assets/ba395d0d-187c-4752-bc2c-9ae892edacac" />
+
+3. Uji Clean URL Halaman Profil
+   ```wget -qO- http://core.k54.com/profil```
+   <img width="1060" height="103" alt="image" src="https://github.com/user-attachments/assets/24e7dbcd-a4a9-466d-99a6-b82532f2d64b" />
+
+4. Uji Akses vis Hostname Masing-Masing server
+   ```
+      wget -qO- http://oblada.k54.com/profil
+      wget -qO- http://molly.k54.com/profil
+   ```
+   <img width="1062" height="190" alt="image" src="https://github.com/user-attachments/assets/ad9015a6-53df-45aa-86c4-ad0562a2ec5c" />
+
+
 
    
 
