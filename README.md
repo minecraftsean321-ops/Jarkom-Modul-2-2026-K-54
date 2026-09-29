@@ -11,7 +11,7 @@
 **Prefix IP kelompok:** `192.238.0.0`
 **OS node:** Alpine Linux
 
-## 1. Tujuan
+## Soal 1
 
 Sebagai pusat kesadaran *The Mesh*, `rootkit` merentangkan koneksinya ke lima gerbang utama (Switch). Tugasnya adalah menetapkan alamat IP dan *default gateway* untuk seluruh Entitas sesuai topologi pembagian switch:
 
@@ -181,11 +181,269 @@ ping -c 3 192.238.1.2
 <img width="546" height="363" alt="Screenshot 2026-09-29 at 16 35 24" src="https://github.com/user-attachments/assets/1bcdcc5b-6f26-4c6d-aa80-12b7014a1eda" />
 <img width="541" height="361" alt="Screenshot 2026-09-29 at 16 36 02" src="https://github.com/user-attachments/assets/521341a8-ad74-4b06-b1bc-4f35b052c808" />
 
-## 6. Kesimpulan
+## Soal 4
+ 
+- Di **`prab`**: bangun zona `k54.com` sebagai *authoritative* dengan SOA yang menunjuk ke `prab.k54.com`, serta tambahkan catatan **NS** untuk `prab.k54.com` dan `tedd.k54.com`.
+- Buat **A record** untuk `prab.k54.com` dan `tedd.k54.com` ke IP masing-masing, serta A record **apex** `k54.com` yang mengarah ke gerbang aplikasi dinamis (`penny`).
+- Aktifkan **notify** dan **allow-transfer** ke `tedd`, lalu set **forwarders** ke `192.168.122.1`.
+- Di **`tedd`**: tarik zona `k54.com` dari master dan pastikan server menjawab secara *authoritative*.
+- Perbarui urutan resolver pada seluruh Entitas non-router menjadi: IP `prab`, IP `tedd`, lalu `192.168.122.1`.
+- Verifikasi bahwa query ke domain apex maupun hostname di dalam zona dijawab dengan benar oleh `prab` atau `tedd`.
+## 2. Rencana
+ 
+| Peran | Node | IP | Keterangan |
+|---|---|---|---|
+| DNS Master | `prab` | `192.238.1.2` | Zona `k54.com` bertipe `master` |
+| DNS Slave | `tedd` | `192.238.1.3` | Zona `k54.com` bertipe `slave`, master `192.238.1.2` |
+| Gerbang aplikasi dinamis | `penny` | `192.238.3.2` | Target A record apex `k54.com` |
+| Forwarder | - | `192.168.122.1` | Meneruskan query domain luar |
+ 
+Isi zona `k54.com`:
+ 
+| Nama | Tipe | Nilai |
+|---|---|---|
+| `@` | SOA | `prab.k54.com. root.k54.com.` (serial `2026092901`) |
+| `@` | NS | `prab.k54.com.` |
+| `@` | NS | `tedd.k54.com.` |
+| `prab` | A | `192.238.1.2` |
+| `tedd` | A | `192.238.1.3` |
+| `@` (apex) | A | `192.238.3.2` (penny) |
+ 
+Urutan resolver akhir di semua node non-router:
+ 
+```
+nameserver 192.238.1.2   # prab
+nameserver 192.238.1.3   # tedd
+nameserver 192.168.122.1
+```
+ 
+## 3. Langkah Pengerjaan
+ 
+### Langkah 1 - Konfigurasi DNS Master (`prab`, `192.238.1.2`)
+ 
+```bash
+# 1. Set resolver internet sementara (wajib sebelum install paket)
+echo "nameserver 192.168.122.1" > /etc/resolv.conf
+ 
+# 2. Install paket BIND DNS server & tools
+apk update && apk add bind bind-tools
+ 
+# 3. Buat folder sistem BIND & PID di Alpine
+mkdir -p /etc/bind /var/bind /run/named
+ 
+# 4. Buat file konfigurasi BIND (/etc/bind/named.conf)
+cat << 'NAMED' > /etc/bind/named.conf
+options {
+    directory "/var/bind";
+    allow-query { any; };
+    auth-nxdomain no;
+    listen-on-v6 { none; };
+    forwarders {
+        192.168.122.1;
+    };
+    pid-file "/run/named/named.pid";
+};
+ 
+zone "k54.com" IN {
+    type master;
+    file "/var/bind/k54.com.zone";
+    allow-transfer { 192.238.1.3; };   # izinkan transfer ke tedd
+    notify yes;                        # beri tahu tedd jika ada perubahan
+    also-notify { 192.238.1.3; };
+};
+NAMED
+ 
+# 5. Buat file database zona k54.com (/var/bind/k54.com.zone)
+cat << 'ZONE' > /var/bind/k54.com.zone
+$TTL 1D
+@   IN  SOA prab.k54.com. root.k54.com. (
+            2026092901 ; Serial YYYYMMDDNN
+            1D         ; Refresh
+            1H         ; Retry
+            1W         ; Expire
+            1D )       ; Minimum TTL
+ 
+; Record Name Server (prab & tedd)
+@       IN  NS  prab.k54.com.
+@       IN  NS  tedd.k54.com.
+ 
+; Record A Name Server
+prab    IN  A   192.238.1.2
+tedd    IN  A   192.238.1.3
+ 
+; Record A apex domain (k54.com mengarah ke IP penny)
+@       IN  A   192.238.3.2
+ZONE
+ 
+# 6. Set permission & jalankan daemon BIND
+chown -R named:named /etc/bind /var/bind /run/named
+pkill named 2>/dev/null || true
+named -u named -c /etc/bind/named.conf
+ 
+# 7. Update resolver internal setelah BIND aktif
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+```
+ 
+### Langkah 2 - Konfigurasi DNS Slave (`tedd`, `192.238.1.3`)
+ 
+```bash
+# 1. Set resolver internet sementara (wajib sebelum install paket)
+echo "nameserver 192.168.122.1" > /etc/resolv.conf
+ 
+# 2. Install paket BIND DNS server & tools
+apk update && apk add bind bind-tools
+ 
+# 3. Buat folder penampung zona slave & PID di Alpine
+mkdir -p /etc/bind /var/bind/slaves /run/named
+ 
+# 4. Buat file konfigurasi BIND slave (/etc/bind/named.conf)
+cat << 'NAMED' > /etc/bind/named.conf
+options {
+    directory "/var/bind";
+    allow-query { any; };
+    auth-nxdomain no;
+    listen-on-v6 { none; };
+    forwarders {
+        192.168.122.1;
+    };
+    pid-file "/run/named/named.pid";
+};
+ 
+zone "k54.com" IN {
+    type slave;
+    file "/var/bind/slaves/k54.com.zone";
+    masters { 192.238.1.2; };   # menunjuk ke prab sebagai master
+};
+NAMED
+ 
+# 5. Set permission & jalankan daemon BIND
+chown -R named:named /etc/bind /var/bind /run/named
+pkill named 2>/dev/null || true
+named -u named -c /etc/bind/named.conf
+ 
+# 6. Update resolver internal setelah BIND aktif
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+```
+ 
+### Langkah 3 - Update resolver seluruh node non-router lainnya
+ 
+Dijalankan di `alpha`, `beta`, `gamma`, `delta`, `epsilon`, `abbey`, `penny`, `obladi`, `desmond`, `oblada`, dan `molly`.
+ 
+```bash
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+```
+ 
+## 4. Pengujian
+ 
+> Blok "Ekspektasi output" di bawah adalah hasil yang seharusnya muncul. Tempelkan screenshot output aktual dari terminalmu di bagian yang diberi tanda **[Screenshot]**.
+ 
+### 4.1 Uji zone transfer di slave (`tedd`)
+ 
+Membuktikan `tedd` berhasil menarik file zona `k54.com` dari `prab` secara otomatis.
+ 
+```bash
+ls -la /var/bind/slaves/
+```
+ 
+Ekspektasi output: file `k54.com.zone` muncul di folder tersebut.
+ 
+```text
+-rw-r--r-- 1 named named  ... k54.com.zone
+```
+<img width="546" height="366" alt="Screenshot 2026-09-29 at 17 34 21" src="https://github.com/user-attachments/assets/56e38a39-69a8-4618-bcfe-4f75aa137f45" />
 
-- `rootkit` berhasil menjadi router pusat yang menghubungkan lima gerbang (Switch) ke lima subnet `192.238.X.0/24` dan satu jalur keluar ke NAT.
-- Seluruh Entitas memperoleh IP statis dan *default gateway* menuju `rootkit` pada subnet masing-masing.
-- Pengujian membuktikan konektivitas ke internet (`8.8.8.8`, `1.1.1.1`) dan routing antar subnet (`alpha` → `delta`, `alpha` → `prab`) berhasil dengan 0% packet loss.
+ 
+### 4.2 Uji query domain apex dari klien (`alpha`)
+ 
+Membuktikan query `k54.com` dialihkan ke IP `penny` (`192.238.3.2`).
+ 
+```bash
+nslookup k54.com
+```
+ 
+Ekspektasi output:
+ 
+```text
+Server:         192.238.1.2
+Address:        192.238.1.2#53
+ 
+Name:   k54.com
+Address: 192.238.3.2
+```
+<img width="544" height="365" alt="Screenshot 2026-09-29 at 17 34 55" src="https://github.com/user-attachments/assets/e9659309-375c-4280-9efe-6775a6f61d04" />
+
+ 
+### 4.3 Uji jawaban authoritative dari slave (`tedd`)
+ 
+Memastikan `tedd` tidak sekadar menyimpan file, tetapi menjawab sebagai server authoritative yang sah.
+ 
+```bash
+dig @192.238.1.3 k54.com
+```
+ 
+Ekspektasi output: pada bagian header terdapat flag **`aa`** (authoritative answer), dan bagian ANSWER berisi `k54.com. ... IN A 192.238.3.2`.
+ 
+<img width="541" height="361" alt="Screenshot 2026-09-29 at 17 35 10" src="https://github.com/user-attachments/assets/28ca5531-6bf1-4ed1-8c83-0f9ca0cf7928" />
+
+ 
+### 4.4 Uji forwarders (resolusi domain luar via DNS internal)
+ 
+Membuktikan aturan `forwarders { 192.168.122.1; };` bekerja, sehingga DNS internal dapat meneruskan query domain internet.
+ 
+```bash
+nslookup google.com
+```
+ 
+Ekspektasi output: `google.com` berhasil di-resolve (muncul alamat IP) melalui server `192.238.1.2`.
+ 
+<img width="346" height="314" alt="Screenshot 2026-09-29 at 17 38 52" src="https://github.com/user-attachments/assets/cf67ce90-09b0-4015-9c0f-a9985e912bd1" />
+
+ 
+### 4.5 Uji urutan resolver (`/etc/resolv.conf`)
+ 
+Memastikan urutan resolver pada host non-router sesuai petunjuk soal.
+ 
+```bash
+cat /etc/resolv.conf
+```
+ 
+Ekspektasi output:
+ 
+```text
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+```
+ 
+<img width="226" height="58" alt="Screenshot 2026-09-29 at 17 47 00" src="https://github.com/user-attachments/assets/53763af6-3155-45cc-b3e1-8710e2b69bde" />
+
+ 
+### 4.6 Uji hostname di dalam zona (tambahan)
+ 
+Soal meminta verifikasi untuk domain apex **dan** hostname di dalam zona. Uji hostname belum ada di daftar pengujian, jadi disarankan menambahkan:
+ 
+```bash
+nslookup prab.k54.com
+nslookup tedd.k54.com
+```
+ 
+Ekspektasi: `prab.k54.com` menjawab `192.238.1.2` dan `tedd.k54.com` menjawab `192.238.1.3`.
+
+<img width="537" height="311" alt="Screenshot 2026-09-29 at 17 48 46" src="https://github.com/user-attachments/assets/0afc9902-3cbb-4b34-b33d-923986b41190" />
+
+
 
 # 6. Memastikan zona transfer dari DNS master (prab) ke DNS slave (tedd) berjalan dengan serial SOA di kedua node identik.
 
