@@ -1344,6 +1344,9 @@ chmod +x /root/setup.sh && bash /root/setup.sh
    <img width="1062" height="190" alt="image" src="https://github.com/user-attachments/assets/ad9015a6-53df-45aa-86c4-ad0562a2ec5c" />
 
 
+   # 11. 
+
+
 
    
 
