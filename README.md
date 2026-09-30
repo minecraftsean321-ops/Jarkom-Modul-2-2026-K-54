@@ -1,4 +1,3 @@
-<img width="539" height="359" alt="Screenshot 2026-09-29 at 21 29 44" src="https://github.com/user-attachments/assets/359d9934-b202-48b7-a58d-a4e33323349e" />  
 
 # Jarkom-Modul-2-2026-K-54  
 
@@ -1956,8 +1955,9 @@ curl -i http://www.k54.com
 ```
  
 Ekspektasi: status `HTTP/1.1 200 OK` dan isi halaman dari salah satu backend vault, yaitu `Response dari OBLADI (Vault 1)` atau `Response dari DESMOND (Vault 2)`.
- 
-**[Screenshot]**
+
+<img width="299" height="248" alt="Screenshot 2026-09-30 at 04 32 13" src="https://github.com/user-attachments/assets/d3a6157e-f100-4e09-804d-75dbdc62f1ca" />
+
  
 **Uji load balancing (pergiliran backend):**
  
@@ -1967,8 +1967,8 @@ for i in {1..4}; do curl -s http://penny.k54.com; echo "-------------------"; do
  
 Ekspektasi: jawaban bergantian antara `OBLADI (Vault 1)` dan `DESMOND (Vault 2)` (metode `byrequests`), sehingga dari 4 request muncul masing-masing backend dua kali.
  
-**[Screenshot]**
- 
+<img width="541" height="360" alt="Screenshot 2026-09-30 at 04 31 36" src="https://github.com/user-attachments/assets/c259c360-0200-4f33-bede-57b4c7688624" />
+
 ### 4.2 Reverse proxy Nginx `abbey` -> area core
  
 **Uji respons HTTP (single request):**
@@ -1981,8 +1981,8 @@ curl -i http://static.k54.com
  
 Ekspektasi: status `HTTP/1.1 200 OK` dan halaman `Selamat Datang di Beranda Core (...)` dengan `Server Hostname` `oblada` atau `molly`.
  
-**[Screenshot]**
- 
+<img width="512" height="133" alt="Screenshot 2026-09-30 at 04 32 37" src="https://github.com/user-attachments/assets/175ce6ca-c15c-4d6a-b0ee-60937f5eb0cd" />
+
 **Uji load balancing (pergiliran backend):**
  
 ```bash
@@ -1991,40 +1991,8 @@ for i in {1..4}; do curl -s http://abbey.k54.com; echo "-------------------"; do
  
 Ekspektasi: `Server Hostname` bergantian antara `oblada` dan `molly` (round robin bawaan Nginx).
  
-**[Screenshot]**
- 
-### 4.3 Uji header `Host` dan `X-Real-IP` (tambahan)
- 
-Soal meminta bukti bahwa header diteruskan, sedangkan daftar pengujian di atas hanya membuktikan distribusi lalu lintas. Untuk `abbey`, buat halaman uji sementara di **`oblada`** dan **`molly`**:
- 
-```bash
-cat << 'PHP' > /var/www/html/hdr.php
-<?php
-echo $_SERVER['HTTP_HOST'] . " | X-Real-IP: " . ($_SERVER['HTTP_X_REAL_IP'] ?? '-') . "\n";
-?>
-PHP
-```
- 
-Lalu dari `alpha`:
- 
-```bash
-curl http://abbey.k54.com/hdr
-```
- 
-Ekspektasi: `abbey.k54.com | X-Real-IP: 192.238.4.2`. Host tetap `abbey.k54.com` dan X-Real-IP adalah IP asli `alpha`, bukan IP `abbey`.
- 
-**[Screenshot]**
- 
-Untuk `penny`, backend vault berupa halaman HTML statis sehingga header tidak tampil di respons. Cara memeriksanya: tambahkan di baris paling atas `/etc/nginx/http.d/default.conf` pada `obladi` atau `desmond`:
- 
-```nginx
-log_format hdr '$remote_addr host=$host xrip=$http_x_real_ip';
-access_log /var/log/nginx/hdr.log hdr;
-```
- 
-Muat ulang Nginx (`nginx -s reload`), jalankan `curl http://penny.k54.com` dari `alpha`, lalu `tail /var/log/nginx/hdr.log` di backend. Pada baris log, `host=` harus `penny.k54.com` dan `xrip=` harus `192.238.4.2`.
- 
-**[Screenshot]**
+<img width="545" height="147" alt="Screenshot 2026-09-30 at 04 33 16" src="https://github.com/user-attachments/assets/dbf3fdee-71e8-4180-9b90-e44cab623bbb" />
+
  
 
       
