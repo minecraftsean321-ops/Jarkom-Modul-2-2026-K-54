@@ -1993,14 +1993,238 @@ Ekspektasi: `Server Hostname` bergantian antara `oblada` dan `molly` (round robi
  
 <img width="545" height="147" alt="Screenshot 2026-09-30 at 04 33 16" src="https://github.com/user-attachments/assets/dbf3fdee-71e8-4180-9b90-e44cab623bbb" />
 
+
+# Soal 12: Basic Authentication `/admin` di Penny
  
+---
+ 
+## 1. Deskripsi Soal
+ 
+Terdapat ruang khusus di `penny` yang menyimpan dokumen rahasia sindikat. Terapkan perlindungan **basic authentication** untuk path **`/admin`**. Akses ke jalur tersebut harus:
+ 
+- menolak pengunjung **tanpa kredensial**, dan
+- hanya mengizinkan masuk jika memakai kredensial berikut:
+| Username | Password |
+|---|---|
+| `prabs` | `pakar_pinter_jadi_gob***` |
+ 
+## 2. Rencana
+ 
+| Komponen | Nilai |
+|---|---|
+| Path yang dilindungi | `/admin` |
+| Jenis autentikasi | `AuthType Basic` |
+| Realm | `Restricted Admin Area` |
+| File password | `/etc/apache2/.htpasswd` |
+| File konfigurasi | `/etc/apache2/conf.d/vault-proxy.conf` |
+| Tool pembuat password | `htpasswd` (paket `apache2-utils`) |
+| Aturan akses | `Require valid-user` |
+ 
+ 
+## 3. Langkah Pengerjaan
+ 
+### Langkah 1 - Buat file password (`.htpasswd`)
+ 
+Simpan username `prabs` beserta password-nya di `/etc/apache2/.htpasswd`:
+ 
+```bash
+htpasswd -c -b /etc/apache2/.htpasswd prabs 'pakar_pinter_jadi_gob***'
+```
+ 
+| Opsi | Fungsi |
+|---|---|
+| `-c` | Membuat file baru (menimpa jika sudah ada) |
+| `-b` | Mengambil password dari argumen perintah (non-interaktif) |
+ 
+Password ditulis dalam tanda kutip tunggal agar karakter `***` tidak diperluas oleh shell.
+ 
+### Langkah 2 - Tambah blok `<Location /admin>`
+ 
+Tambahkan pada `/etc/apache2/conf.d/vault-proxy.conf`:
+ 
+```apache
+<Location /admin>
+    AuthType Basic
+    AuthName "Restricted Admin Area"
+    AuthUserFile /etc/apache2/.htpasswd
+    Require valid-user
+</Location>
+```
+ 
+### Langkah 3 - Skrip lengkap `penny` (Soal 11 + Soal 12)
+ 
+Skrip di bawah menggabungkan konfigurasi reverse proxy Soal 11 dengan basic auth Soal 12, lengkap dengan autostart. Bagian khusus Soal 12 ada di langkah **3** (`htpasswd`) dan **4** (blok `<Location /admin>`).
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. KONFIGURASI DASAR JARINGAN & HOSTNAME ---
+NAME="penny"
+IP="192.238.3.2"
+GW="192.238.3.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL APACHE & UTILITIES ---
+apk update && apk add apache2 apache2-proxy apache2-utils
+ 
+# Set ServerName agar Apache tidak menampilkan warning
+# (path file terpotong di screenshot, diasumsikan /etc/apache2/httpd.conf)
+sed -i 's/#ServerName www.example.com:80/ServerName penny.k54.com:80/' /etc/apache2/httpd.conf
+ 
+# --- 3. BUAT FILE BASIC AUTHENTICATION (SOAL 12) ---
+# Membuat file .htpasswd untuk user 'prabs'
+htpasswd -c -b /etc/apache2/.htpasswd prabs 'pakar_pinter_jadi_gob***'
+ 
+# --- 4. KONFIGURASI PROXY & BASIC AUTH UNTUK /admin ---
+cat << 'PROXY' > /etc/apache2/conf.d/vault-proxy.conf
+# Protection Basic Authentication untuk path /admin (Soal 12)
+<Location /admin>
+    AuthType Basic
+    AuthName "Restricted Admin Area"
+    AuthUserFile /etc/apache2/.htpasswd
+    Require valid-user
+</Location>
+ 
+# Load Balancer ke Area Vault (obladi & desmond) (Soal 11)
+<Proxy balancer://vaultcluster>
+    BalancerMember http://192.238.1.4:80
+    BalancerMember http://192.238.1.5:80
+    ProxySet lbmethod=byrequests
+</Proxy>
+ 
+ProxyPreserveHost On
+RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+ 
+ProxyPass / balancer://vaultcluster/
+ProxyPassReverse / balancer://vaultcluster/
+PROXY
+ 
+# --- 5. JALANKAN SERVICE APACHE ---
+mkdir -p /run/apache2
+pkill -9 httpd 2>/dev/null || true
+sleep 1
+httpd -k start
+ 
+# --- 6. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+### Langkah 4 - Siapkan halaman `/admin` di backend (opsional, agar hasil `200 OK`)
+ 
+Tanpa langkah ini, kredensial yang benar tetap lolos autentikasi, tetapi backend membalas `404` karena direktori `/admin` belum ada. Jalankan di **`obladi`** dan **`desmond`** (keduanya, karena balancer bergantian antar backend):
+ 
+```bash
+mkdir -p /var/www/html/admin
+echo "<h1>Dokumen Rahasia Sindikat</h1>" > /var/www/html/admin/index.html
+```
+ 
+## 4. Pengujian
+ 
+Semua pengujian dijalankan dari terminal **`alpha`**. Output di bawah diambil dari hasil pengerjaan.
+ 
+### 4.1 Tanpa kredensial (harus ditolak, 401)
+ 
+```bash
+curl -i http://penny.k54.com/admin
+```
+ 
+Hasil:
+ 
+```text
+HTTP/1.1 401 Unauthorized
+Date: Wed, 30 Sep 2026 14:43:34 GMT
+Server: Apache/2.4.68 (Unix)
+WWW-Authenticate: Basic realm="Restricted Admin Area"
+Content-Length: 498
+Content-Type: text/html; charset=iso-8859-1
+```
 
-      
+Permintaan ditolak dan server meminta kredensial lewat header `WWW-Authenticate` dengan realm `Restricted Admin Area`.
 
+<img width="540" height="157" alt="Screenshot 2026-09-30 at 22 25 31" src="https://github.com/user-attachments/assets/3fc8ee3c-c11e-47ba-b56c-b0eea85b3f7b" />
 
+ 
+### 4.2 Password salah (harus ditolak, 401)
+ 
+```bash
+curl -i -u prabs:salah123 http://penny.k54.com/admin
+```
+ 
+Hasil:
+ 
+```text
+HTTP/1.1 401 Unauthorized
+Date: Wed, 30 Sep 2026 14:44:51 GMT
+Server: Apache/2.4.68 (Unix)
+WWW-Authenticate: Basic realm="Restricted Admin Area"
+Content-Length: 498
+Content-Type: text/html; charset=iso-8859-1
+```
+ 
+Username yang benar dengan password yang salah tetap ditolak.
 
+<img width="539" height="141" alt="Screenshot 2026-09-30 at 22 26 40" src="https://github.com/user-attachments/assets/3900ef99-2865-4ee1-aaf9-f1270ea96995" />
 
+ 
+### 4.3 Kredensial benar (harus diizinkan, 200 OK)
+ 
+```bash
+curl -i -L -u 'prabs:pakar_pinter_jadi_gob***' http://penny.k54.com/admin
+```
+ 
+Hasil:
+ 
+```text
+HTTP/1.1 301 Moved Permanently
+Date: Wed, 30 Sep 2026 14:53:48 GMT
+Server: nginx
+Content-Type: text/html
+Content-Length: 162
+Location: http://penny.k54.com/admin/
+ 
+HTTP/1.1 200 OK
+Date: Wed, 30 Sep 2026 14:53:48 GMT
+Server: nginx
+Content-Type: text/html
+Content-Length: 34
+Last-Modified: Wed, 30 Sep 2026 14:51:59 GMT
+ETag: "6abd220f-22"
+Accept-Ranges: bytes
+ 
+<h1>Dokumen Rahasia Sindikat</h1>
+```
+<img width="557" height="297" alt="Screenshot 2026-09-30 at 22 38 40" src="https://github.com/user-attachments/assets/e1c56c66-00f1-424e-8847-408067680298" />
 
-   
-
-   
+ 
+Penjelasan:
+ 
+- Kredensial yang benar lolos dari Apache dan diteruskan ke backend (`Server: nginx`).
+- Status `301` muncul karena Nginx di backend mengalihkan `/admin` menjadi `/admin/`. Opsi `-L` membuat `curl` mengikuti pengalihan itu, sehingga akhirnya mendapat `200 OK` dan isi halaman `Dokumen Rahasia Sindikat`.
+- Header `Location` bernilai `http://penny.k54.com/admin/` (bukan IP backend), menandakan `ProxyPreserveHost` dan `ProxyPassReverse` bekerja.
