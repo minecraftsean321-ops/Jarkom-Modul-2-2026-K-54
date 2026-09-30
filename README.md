@@ -2228,3 +2228,328 @@ Penjelasan:
 - Kredensial yang benar lolos dari Apache dan diteruskan ke backend (`Server: nginx`).
 - Status `301` muncul karena Nginx di backend mengalihkan `/admin` menjadi `/admin/`. Opsi `-L` membuat `curl` mengikuti pengalihan itu, sehingga akhirnya mendapat `200 OK` dan isi halaman `Dokumen Rahasia Sindikat`.
 - Header `Location` bernilai `http://penny.k54.com/admin/` (bukan IP backend), menandakan `ProxyPreserveHost` dan `ProxyPassReverse` bekerja.
+
+# Soal 13: Canonical Name & Redirect 301/302
+ 
+---
+ 
+## 1. Deskripsi Soal
+ 
+Setiap entitas dari luar harus memanggil gerbang dengan **nama kanoniknya**:
+ 
+- Jika ada yang mengakses **IP `penny`** atau domain **`penny.k54.com`**, sistem memaksa **redirect permanen (301)** menuju **`www.k54.com`**.
+- Sebaliknya, jika ada yang mengakses **IP `abbey`** atau domain **`abbey.k54.com`**, lakukan **redirect sementara (302)** menuju **`static.k54.com`**.
+## 2. Rencana
+ 
+| Diakses lewat | Gerbang | Aksi | Tujuan |
+|---|---|---|---|
+| `192.238.3.2` (IP penny) | `penny` | Redirect **301** | `http://www.k54.com/` |
+| `penny.k54.com` | `penny` | Redirect **301** | `http://www.k54.com/` |
+| `www.k54.com` (kanonis) | `penny` | Tanpa redirect, `200 OK` | Konten Vault Area (`obladi`/`desmond`) |
+| `192.238.2.2` (IP abbey) | `abbey` | Redirect **302** | `http://static.k54.com/` |
+| `abbey.k54.com` | `abbey` | Redirect **302** | `http://static.k54.com/` |
+| `static.k54.com` (kanonis) | `abbey` | Tanpa redirect, `200 OK` | Konten Core Area (`oblada`/`molly`) |
+ 
+ 
+Teknik yang dipakai:
+ 
+| Gerbang | Teknik | Penjelasan |
+|---|---|---|
+| `penny` (Apache) | `VirtualHost` tunggal dengan `ServerName www.k54.com` + `RewriteCond`/`RewriteRule [R=301,L]` | Semua `Host` selain `www.k54.com` (termasuk IP dan `penny.k54.com`) dialihkan permanen. |
+| `abbey` (Nginx) | Dua `server` block: satu untuk `abbey.k54.com` + IP (`return 302`), satu `default_server` untuk `static.k54.com` (proxy) | Host `abbey` dan IP dialihkan sementara, `static.k54.com` dilayani langsung. |
+ 
+## 3. Langkah Pengerjaan
+ 
+### Langkah 1 - Prasyarat DNS
+ 
+Pengujian memakai `www.k54.com` dan `static.k54.com`. Kedua nama ini harus bisa di-resolve klien (record CNAME diasumsikan sudah dibuat pada soal sebelumnya, lihat README Soal 11). Jika belum, tambahkan di zona `prab`, lalu naikkan serial SOA dan muat ulang `named`:
+ 
+```text
+www     IN  CNAME  penny.k54.com.
+static  IN  CNAME  abbey.k54.com.
+```
+ 
+### Langkah 2 - Konfigurasi `penny` (redirect 301)
+ 
+Skrip lengkap `/root/setup.sh` di `penny`. Bagian khusus Soal 13 adalah aktivasi modul `rewrite` dan blok `RewriteCond`/`RewriteRule` di dalam `VirtualHost`.
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. JARINGAN & HOSTNAME ---
+NAME="penny"
+IP="192.238.3.2"
+GW="192.238.3.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL APACHE & UTILITIES ---
+apk update && apk add apache2 apache2-proxy apache2-utils
+ 
+# Aktifkan modul rewrite & proxy
+# (path file terpotong di screenshot, diasumsikan /etc/apache2/httpd.conf)
+sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule proxy_module/LoadModule proxy_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule proxy_http_module/LoadModule proxy_http_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule proxy_balancer_module/LoadModule proxy_balancer_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule lbmethod_byrequests_module/LoadModule lbmethod_byrequests_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule slotmem_shm_module/LoadModule slotmem_shm_module/' /etc/apache2/httpd.conf
+ 
+# --- 3. BASIC AUTHENTICATION (SOAL 12) ---
+htpasswd -c -b /etc/apache2/.htpasswd prabs 'pakar_pinter_jadi_gob***'
+ 
+# --- 4. VIRTUALHOST DENGAN LOGIKA REWRITE (SOAL 11, 12, 13) ---
+rm -f /etc/apache2/conf.d/default.conf /etc/apache2/conf.d/vault-proxy.conf
+ 
+cat << 'PROXY' > /etc/apache2/conf.d/vault-proxy.conf
+<VirtualHost *:80>
+    ServerName www.k54.com
+    ServerAlias penny.k54.com 192.238.3.2
+ 
+    # --- SOAL 13: jika Host bukan www.k54.com (mis. IP / subdomain), paksa redirect 301 ---
+    RewriteEngine On
+    RewriteCond %{HTTP_HOST} !^www\.k54\.com$ [NC]
+    RewriteRule ^/(.*)$ http://www.k54.com/$1 [R=301,L]
+ 
+    # --- SOAL 12: proteksi basic auth /admin ---
+    <Location /admin>
+        AuthType Basic
+        AuthName "Restricted Admin Area"
+        AuthUserFile /etc/apache2/.htpasswd
+        Require valid-user
+    </Location>
+ 
+    # --- SOAL 11: load balancer vault area ---
+    <Proxy balancer://vaultcluster>
+        BalancerMember http://192.238.1.4:80 retry=0
+        BalancerMember http://192.238.1.5:80 retry=0
+        ProxySet lbmethod=byrequests
+    </Proxy>
+ 
+    ProxyPreserveHost On
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+ 
+    ProxyPass / balancer://vaultcluster/
+    ProxyPassReverse / balancer://vaultcluster/
+</VirtualHost>
+PROXY
+ 
+# --- 5. RESTART SERVICE APACHE ---
+mkdir -p /run/apache2
+pkill -9 httpd 2>/dev/null || true
+sleep 1
+httpd -k start
+ 
+# --- 6. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+ 
+### Langkah 3 - Konfigurasi `abbey` (redirect 302)
+ 
+Skrip lengkap `/root/setup.sh` di `abbey` (jaringan, reverse proxy Soal 11, dan redirect Soal 13):
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. KONFIGURASI JARINGAN & HOSTNAME ---
+NAME="abbey"
+IP="192.238.2.2"
+GW="192.238.2.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL & KONFIGURASI NGINX ---
+apk update && apk add nginx
+mkdir -p /run/nginx
+ 
+# --- 3. KONFIGURASI PROXY & REDIRECT 302 (SOAL 11 & 13) ---
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+upstream corecluster {
+    server 192.238.1.6:80;
+    server 192.238.1.7:80;
+}
+ 
+# Server block redirect 302 (IP & abbey.k54.com -> static.k54.com) (Soal 13)
+server {
+    listen 80;
+    listen [::]:80;
+    server_name abbey.k54.com 192.238.2.2;
+ 
+    return 302 http://static.k54.com$request_uri;
+}
+ 
+# Server block utama kanonis (static.k54.com) (Soal 11)
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name static.k54.com;
+ 
+    location / {
+        proxy_pass http://corecluster;
+ 
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+NGINX
+ 
+# --- 4. JALANKAN SERVICE NGINX ---
+pkill -9 nginx 2>/dev/null || true
+sleep 1
+nginx
+ 
+# --- 5. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+Perbedaan dibanding skrip Soal 11: `server` block lama yang menjadi `default_server` kini hanya melayani `static.k54.com`, dan ditambah satu `server` block baru untuk `abbey.k54.com` dan `192.238.2.2` yang berisi `return 302 http://static.k54.com$request_uri;`. Variabel `$request_uri` membuat path dan query string ikut terbawa ke domain tujuan.
+ 
+## 4. Pengujian
+ 
+Semua pengujian dijalankan dari terminal **`alpha`**. Blok "ekspektasi" adalah hasil yang seharusnya muncul; tempelkan screenshot output aktual di bagian bertanda **[Screenshot]**.
+ 
+### 4.1 Redirect permanen 301 di `penny`
+ 
+**a. Akses via IP penny:**
+ 
+```bash
+curl -i http://192.238.3.2
+```
+ 
+Ekspektasi:
+ 
+```text
+HTTP/1.1 301 Moved Permanently
+Location: http://www.k54.com/
+```
+ 
+<img width="542" height="101" alt="Screenshot 2026-09-30 at 23 35 43" src="https://github.com/user-attachments/assets/1a9952f0-c274-4f0d-b82b-71413e741973" />
+
+ 
+**b. Akses via domain subdomain penny:**
+ 
+```bash
+curl -i http://penny.k54.com
+```
+ 
+Ekspektasi:
+ 
+```text
+HTTP/1.1 301 Moved Permanently
+Location: http://www.k54.com/
+```
+ 
+<img width="422" height="102" alt="Screenshot 2026-09-30 at 23 36 22" src="https://github.com/user-attachments/assets/cd4b26e9-21b7-49bd-a0b6-7369523704bc" />
+
+ 
+**c. Akses via domain kanonis:**
+ 
+```bash
+curl -i http://www.k54.com
+```
+ 
+Ekspektasi: `HTTP/1.1 200 OK` dan langsung memuat konten Vault Area (`Response dari OBLADI (Vault 1)` atau `DESMOND (Vault 2)`) tanpa redirect.
+ 
+<img width="347" height="130" alt="Screenshot 2026-09-30 at 23 37 33" src="https://github.com/user-attachments/assets/c9d37d34-25ad-4232-96fd-b4554693a2f4" />
+
+ 
+### 4.2 Redirect sementara 302 di `abbey`
+ 
+**a. Akses via IP abbey:**
+ 
+```bash
+curl -i http://192.238.2.2
+```
+ 
+Ekspektasi:
+ 
+```text
+HTTP/1.1 302 (Found / Moved Temporarily)
+Location: http://static.k54.com/
+```
+ 
+<img width="306" height="113" alt="Screenshot 2026-09-30 at 23 38 48" src="https://github.com/user-attachments/assets/50dbe875-a657-4108-ad86-f6ddd8305b28" />
+
+ 
+**b. Akses via domain subdomain abbey:**
+ 
+```bash
+curl -i http://abbey.k54.com
+```
+ 
+Ekspektasi:
+ 
+```text
+HTTP/1.1 302 (Found / Moved Temporarily)
+Location: http://static.k54.com/
+```
+ 
+<img width="338" height="113" alt="Screenshot 2026-09-30 at 23 39 55" src="https://github.com/user-attachments/assets/5450ffbf-d580-4e85-8db5-020fd2376837" />
+
+ 
+**c. Akses via domain kanonis:**
+ 
+```bash
+curl -i http://static.k54.com
+```
+ 
+Ekspektasi: `HTTP/1.1 200 OK` dan langsung memuat konten Core Area (`Selamat Datang di Beranda Core (Oblada/Molly)`) tanpa redirect.
+ 
+<img width="311" height="111" alt="Screenshot 2026-09-30 at 23 40 32" src="https://github.com/user-attachments/assets/52f943f9-00e9-4126-a1ed-7aadc6365bd6" />
+
+ 
+ 
