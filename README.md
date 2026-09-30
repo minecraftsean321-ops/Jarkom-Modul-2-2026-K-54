@@ -1295,7 +1295,7 @@ Melakukan pengujian menggunakan nama domain/hostname, bukan IP address. Buka ter
    <img width="1063" height="205" alt="image" src="https://github.com/user-attachments/assets/b8bb6916-4a2c-4000-a35d-fd78cd53f8de" />
 
 
-# 10. Mengonfigurasi Web Server Dinamis (Nginx + PHP-FPM) pada node-node Area Core (oblada & molly). 
+# soal 10. Mengonfigurasi Web Server Dinamis (Nginx + PHP-FPM) pada node-node Area Core (oblada & molly). 
 
 Spesifikasi utama yang harus dipenuhi:
 1. Menggunakan Nginx dan PHP-FPM.
@@ -1539,183 +1539,493 @@ chmod +x /root/setup.sh && bash /root/setup.sh
    ```
    <img width="1062" height="190" alt="image" src="https://github.com/user-attachments/assets/ad9015a6-53df-45aa-86c4-ad0562a2ec5c" />
 
-# 11. Mengonfigurasi dua server Reverse Proxy sekaligus yaitu di node Penny dan Abbey
-
-Output yang diminta:
-1. penny (menggunakan Apache/httpd) -> mendistribusikan lalu lintas ke Area Vault (obladi & desmond).
-2. abbey (menggunakan Nginx) -> mendistribusikan lalu lintas ke Area Core (oblada & molly).
-3. Syarat Khusus: Kedua reverse proxy wajib meneruskan header Host dan X-Real-IP agar server backend mengetahui nama host dan IP asli dari pengunjung (client).
-
-## Langkah 1
-1. Lakukan konfigurasi di Node penny menggunakan script di bawah ini
-
-   ```
-    cat << 'EOF' > /root/setup.sh
-    #!/bin/bash
-    
-    # 1. Hostname & Network Interface
-    hostname penny
-    echo "penny" > /etc/hostname
-    
-    cat << 'NET' > /etc/network/interfaces
-    auto lo
-    iface lo inet loopback
-    
-    auto eth0
-    iface eth0 inet static
-        address 192.238.3.2
-        netmask 255.255.255.0
-        gateway 192.238.3.1
-    NET
-    
-    ifup -a 2>/dev/null || true
-    
-    # 2. Resolver DNS
-    cat << 'RESOLV' > /etc/resolv.conf
-    nameserver 192.238.1.2
-    nameserver 192.238.1.3
-    options single-request
-    RESOLV
-    
-    # 3. Install Apache & Modul Proxy
-    apk update && apk add apache2 apache2-proxy curl
-    
-    # 4. Aktifkan Modul Proxy, Balancer, dan Headers pada httpd.conf
-    sed -i 's/#LoadModule proxy_module/LoadModule proxy_module/' /etc/apache2/httpd.conf
-    sed -i 's/#LoadModule proxy_http_module/LoadModule proxy_http_module/' /etc/apache2/httpd.conf
-    sed -i 's/#LoadModule proxy_balancer_module/LoadModule proxy_balancer_module/' /etc/apache2/httpd.conf
-    sed -i 's/#LoadModule lbmethod_byrequests_module/LoadModule lbmethod_byrequests_module/' /etc/apache2/httpd.conf
-    sed -i 's/#LoadModule slotmem_shm_module/LoadModule slotmem_shm_module/' /etc/apache2/httpd.conf
-    sed -i 's/#LoadModule headers_module/LoadModule headers_module/' /etc/apache2/httpd.conf
-    
-    # 5. Konfigurasi Reverse Proxy ke Area Vault (obladi & desmond)
-    cat << 'CONF' > /etc/apache2/conf.d/reverse-proxy.conf
-    <Proxy "balancer://vaultcluster">
-        BalancerMember "http://192.238.1.4:80"
-        BalancerMember "http://192.238.1.5:80"
-        ProxySet lbmethod=byrequests
-    </Proxy>
-    
-    # Forwarding Header Host & X-Real-IP
-    ProxyPreserveHost On
-    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
-    
-    ProxyPass "/" "balancer://vaultcluster/"
-    ProxyPassReverse "/" "balancer://vaultcluster/"
-    CONF
-    
-    # 6. Restart Service Apache
-    pkill -9 httpd 2>/dev/null || true
-    sleep 1
-    httpd -k start
-    EOF
-    
-    chmod +x /root/setup.sh && bash /root/setup.sh
-   ```
-
-## Langkah 2
-1. Konfigurasi node abbey menggunakan scripth di bawah ini
-
-   ```
-    cat << 'EOF' > /root/setup.sh
-    #!/bin/bash
-    
-    # 1. Hostname & Network Interface
-    hostname abbey
-    echo "abbey" > /etc/hostname
-    
-    cat << 'NET' > /etc/network/interfaces
-    auto lo
-    iface lo inet loopback
-    
-    auto eth0
-    iface eth0 inet static
-        address 192.238.2.2
-        netmask 255.255.255.0
-        gateway 192.238.2.1
-    NET
-    
-    ifup -a 2>/dev/null || true
-    
-    # 2. Resolver DNS
-    cat << 'RESOLV' > /etc/resolv.conf
-    nameserver 192.238.1.2
-    nameserver 192.238.1.3
-    options single-request
-    RESOLV
-    
-    # 3. Install Nginx
-    apk update && apk add nginx curl
-    
-    mkdir -p /etc/nginx/http.d
-    
-    # 4. Konfigurasi Nginx Upstream & Forwarding Header ke Area Core (oblada & molly)
-    cat << 'NGINX' > /etc/nginx/http.d/default.conf
-    upstream core_cluster {
-        server 192.238.1.6:80;
-        server 192.238.1.7:80;
+# Soal 11: Reverse Proxy Penny (Apache) & Abbey (Nginx)
+ 
+**Proyek GNS3:** `K-54-MODUL-2`
+**Domain:** `k54.com`
+**OS node:** Alpine Linux (OpenRC)
+ 
+Dokumen ini melanjutkan Soal 1-5 (IP, NAT, routing, DNS master-slave, hostname & domain node).
+ 
+---
+ 
+## 1. Deskripsi Soal
+ 
+- Konfigurasikan **`penny`** (Apache) sebagai *reverse proxy* yang mengarah ke semua node di **area vault** (`obladi` & `desmond`).
+- Konfigurasikan **`abbey`** (Nginx) sebagai *reverse proxy* menuju **area core** (`oblada` & `molly`).
+- Kedua gerbang harus meneruskan identitas asli pengunjung ke server backend dengan *forwarding header* **`Host`** dan **`X-Real-IP`**.
+- Buktikan bahwa `penny` dan `abbey` berhasil mendistribusikan lalu lintas dengan tepat.
+## 2. Rencana & Arsitektur
+ 
+| Peran | Node | IP | Software | Keterangan |
+|---|---|---|---|---|
+| Gerbang vault | `penny` | `192.238.3.2` | Apache (`apache2`, `apache2-proxy`) | Balancer `vaultcluster`, metode `byrequests` |
+| Backend vault 1 | `obladi` | `192.238.1.4` | Nginx | Halaman statis "Vault Area 1" |
+| Backend vault 2 | `desmond` | `192.238.1.5` | Nginx | Halaman statis "Vault Area 2" |
+| Gerbang core | `abbey` | `192.238.2.2` | Nginx | Upstream `corecluster` (round robin) |
+| Backend core 1 | `oblada` | `192.238.1.6` | Nginx + PHP-FPM | Aplikasi PHP + clean URL |
+| Backend core 2 | `molly` | `192.238.1.7` | Nginx + PHP-FPM | Aplikasi PHP + clean URL |
+ 
+ 
+Header yang diteruskan gerbang ke backend:
+ 
+| Header | Penny (Apache) | Abbey (Nginx) |
+|---|---|---|
+| `Host` | `ProxyPreserveHost On` | `proxy_set_header Host $host;` |
+| `X-Real-IP` | `RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"` | `proxy_set_header X-Real-IP $remote_addr;` |
+| `X-Forwarded-For` | otomatis oleh `mod_proxy` | `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` |
+ 
+## 3. Langkah Pengerjaan
+ 
+Urutan: siapkan **backend** dulu (vault dan core), baru **gerbang** (`penny` dan `abbey`). Setiap skrip berdiri sendiri (mengatur hostname, IP, resolver, service, dan autostart), lalu dijalankan di terminal node terkait.
+ 
+### Langkah 1 - Backend area vault (`obladi` & `desmond`)
+ 
+Skrip untuk **`obladi`** (`192.238.1.4`):
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. HOSTNAME & JARINGAN ---
+NAME="obladi"
+IP="192.238.1.4"
+GW="192.238.1.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+# --- 2. RESOLVER DNS ---
+cat << RESOLV > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 3. INSTALL WEB SERVER NGINX ---
+apk update && apk add nginx
+ 
+# --- 4. BUAT DIREKTORI RUNTIME WAJIB ---
+mkdir -p /run/nginx /var/www/html /etc/nginx/http.d
+ 
+# --- 5. KONTEN HALAMAN WEB ---
+cat << 'HTML' > /var/www/html/index.html
+<!DOCTYPE html>
+<html>
+<head><title>Vault Area 1</title></head>
+<body>
+<h1>Response dari OBLADI (Vault 1)</h1>
+<p>IP Address: 192.238.1.4</p>
+</body>
+</html>
+HTML
+ 
+# --- 6. KONFIGURASI NGINX SERVER BLOCK ---
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+ 
+    root /var/www/html;
+    index index.html index.htm;
+ 
+    location / {
+        try_files $uri $uri/ =404;
     }
-    
-    server {
-        listen 80;
-        server_name abbey.k54.com static.k54.com;
-    
-        location / {
-            proxy_pass http://core_cluster;
-    
-            # Forwarding Header Host & X-Real-IP
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        }
+}
+NGINX
+ 
+# --- 7. JALANKAN SERVICE NGINX ---
+pkill -9 nginx 2>/dev/null || true
+sleep 1
+nginx
+ 
+# --- 8. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+Skrip **`desmond`** identik. Hanya empat nilai yang berbeda:
+ 
+| Bagian | `obladi` | `desmond` |
+|---|---|---|
+| `NAME` | `obladi` | `desmond` |
+| `IP` | `192.238.1.4` | `192.238.1.5` |
+| `<title>` | `Vault Area 1` | `Vault Area 2` |
+| `<h1>` / `<p>` | `Response dari OBLADI (Vault 1)` / `IP Address: 192.238.1.4` | `Response dari DESMOND (Vault 2)` / `IP Address: 192.238.1.5` |
+ 
+### Langkah 2 - Backend area core (`oblada` & `molly`)
+ 
+Skrip untuk **`oblada`** (`192.238.1.6`):
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. HOSTNAME & NETWORK INTERFACE ---
+NAME="oblada"
+IP="192.238.1.6"
+GW="192.238.1.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+# --- 2. RESOLVER DNS ---
+cat << RESOLV > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 3. INSTALL NGINX & PHP-FPM ---
+apk update && apk add nginx php-fpm php curl
+ 
+# --- 4. BUAT DIREKTORI WEB ROOT & RUNTIME WAJIB ---
+mkdir -p /var/www/html /etc/nginx/http.d /run/nginx /run/php
+ 
+# --- 5. BUAT FILE APLIKASI (BERANDA & PROFIL) ---
+cat << 'PHP' > /var/www/html/index.php
+<?php
+echo "<h1>Selamat Datang di Beranda Core (Oblada)</h1>";
+echo "<p>Server Hostname: " . gethostname() . "</p>";
+?>
+PHP
+ 
+cat << 'PHP' > /var/www/html/profil.php
+<?php
+echo "<h1>Halaman Profil Server Core (Oblada)</h1>";
+echo "<p>Ini adalah halaman profil dengan URL Bersih (Clean URL)!</p>";
+echo "<p>Node: " . gethostname() . " (" . $_SERVER['SERVER_ADDR'] . ")</p>";
+?>
+PHP
+ 
+chown -R nginx:nginx /var/www/html 2>/dev/null || true
+ 
+# --- 6. KONFIGURASI NGINX SERVER BLOCK + CLEAN URL REWRITE ---
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name core.k54.com oblada.k54.com;
+ 
+    root /var/www/html;
+    index index.php index.html;
+ 
+    # URL Rewrite (Clean URL)
+    location / {
+        try_files $uri $uri/ $uri.php?$args;
     }
-    NGINX
-    
-    # 5. Restart Nginx
-    pkill -9 nginx 2>/dev/null || true
-    sleep 1
-    nginx
-    EOF
-    
-    chmod +x /root/setup.sh && bash /root/setup.sh
-   ```
-
-## Langkah 3 
-1. Perbarui script Backend (Core) untuk menampilkan Header agaar terlihat jelas bahwa header Host dan X-Real-IP berhasil diteruskan.
-   Perbarui file `/var/www/html/index.php` di node abbey dan penny menggunakan scripth dibawah ini:
-
-   ```
-    cat << 'PHP' > /var/www/html/index.php
-    <?php
-    echo "<h1>Response dari Backend Core: " . gethostname() . "</h1>";
-    echo "<p>IP Backend: " . $_SERVER['SERVER_ADDR'] . "</p>";
-    echo "<p>Header Host: " . ($_SERVER['HTTP_HOST'] ?? 'N/A') . "</p>";
-    echo "<p>Header X-Real-IP (IP Asli Client): " . ($_SERVER['HTTP_X_REAL_IP'] ?? $_SERVER['REMOTE_ADDR']) . "</p>";
-    ?>
-    PHP
-   ```
-
-## Langkah 4: Pengujian
-
-1. Uji Reverse Proxy Penny
-   ```wget -qO- http://penny.k54.com/```
-
-   <img width="638" height="250" alt="image" src="https://github.com/user-attachments/assets/56b83a66-8cf0-4983-8067-7086a3e9889e" />
-
-2. Uji Reverse Proxy Abbey
-   ```wget -qO- http://abbey.k54.com/```
-
-   <img width="1061" height="59" alt="image" src="https://github.com/user-attachments/assets/c5150d84-9744-46b0-a5c8-f5b475e7a22e" />
-
-
-
-
-
-   
-
-
-
-
+ 
+    # Handler PHP-FPM
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}
+NGINX
+ 
+# --- 7. JALANKAN SERVICE PHP-FPM & NGINX ---
+pkill -9 php-fpm 2>/dev/null || true
+pkill -9 nginx 2>/dev/null || true
+sleep 1
+ 
+# Start PHP-FPM sebagai daemon (-D)
+php-fpm -D 2>/dev/null || php-fpm84 -D 2>/dev/null || php-fpm83 -D 2>/dev/null
+# (baris ini terpotong di screenshot; tambahkan versi php-fpm lain sesuai paket yang terpasang)
+nginx
+ 
+# --- 8. AUTOSTART PERSISTENSI OPENRC (AGAR OTOMATIS SAAT BOOT) ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+Skrip **`molly`** identik dengan `oblada`. Nilai yang berbeda:
+ 
+| Bagian | `oblada` | `molly` |
+|---|---|---|
+| `NAME` | `oblada` | `molly` |
+| `IP` | `192.238.1.6` | `192.238.1.7` |
+| `server_name` | `core.k54.com oblada.k54.com` | `core.k54.com molly.k54.com` |
+| Judul di `index.php` | `... Beranda Core (Oblada)` | `... Beranda Core (Molly)` |
+| Judul di `profil.php` | `... Profil Server Core (Oblada)` | `... Profil Server Core (Molly)` |
+ 
+### Langkah 3 - Gerbang vault: `penny` (Apache reverse proxy)
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. JARINGAN & HOSTNAME ---
+NAME="penny"
+IP="192.238.3.2"
+GW="192.238.3.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL & KONFIGURASI REVERSE PROXY APACHE ---
+apk update && apk add apache2 apache2-proxy apache2-utils
+ 
+# Set ServerName
+# (path file terpotong di screenshot, diasumsikan /etc/apache2/httpd.conf)
+sed -i 's/#ServerName www.example.com:80/ServerName penny.k54.com:80/' /etc/apache2/httpd.conf
+ 
+# File konfigurasi proxy balancer ke area vault (obladi & desmond)
+cat << 'PROXY' > /etc/apache2/conf.d/vault-proxy.conf
+<Proxy balancer://vaultcluster>
+    BalancerMember http://192.238.1.4:80
+    BalancerMember http://192.238.1.5:80
+    ProxySet lbmethod=byrequests
+</Proxy>
+ 
+ProxyPreserveHost On
+RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+ 
+ProxyPass / balancer://vaultcluster/
+ProxyPassReverse / balancer://vaultcluster/
+PROXY
+ 
+# --- 3. JALANKAN SERVICE APACHE ---
+mkdir -p /run/apache2
+pkill -9 httpd 2>/dev/null || true
+sleep 1
+httpd -k start
+ 
+# --- 4. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+### Langkah 4 - Gerbang core: `abbey` (Nginx reverse proxy)
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. KONFIGURASI DASAR JARINGAN & HOSTNAME ---
+NAME="abbey"
+IP="192.238.2.2"
+GW="192.238.2.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL & KONFIGURASI NGINX REVERSE PROXY (SOAL 11) ---
+apk update && apk add nginx
+ 
+# Folder runtime wajib Nginx di Alpine Linux
+mkdir -p /run/nginx
+ 
+# Reverse proxy ke area core (oblada & molly)
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+upstream corecluster {
+    server 192.238.1.6:80;
+    server 192.238.1.7:80;
+}
+ 
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+ 
+    location / {
+        proxy_pass http://corecluster;
+ 
+        # Forwarding header Host & X-Real-IP
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+NGINX
+ 
+# Paksa matikan proses Nginx lama agar port 80 lepas sempurna
+pkill -9 nginx 2>/dev/null || true
+sleep 1
+nginx
+ 
+# --- 3. AUTOSTART PERSISTENSI ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+### Prasyarat DNS untuk pengujian
+ 
+Pengujian memakai `penny.k54.com`, `abbey.k54.com` (sudah dibuat pada Soal 5), serta CNAME **`www`** dan **`static`**. Record CNAME diasumsikan sudah dibuat pada soal sebelumnya. Jika belum, tambahkan di zona `prab`:
+ 
+```text
+www     IN  CNAME  penny.k54.com.
+static  IN  CNAME  abbey.k54.com.
+```
+ 
+Lalu naikkan serial SOA dan muat ulang `named` seperti pada Soal 5.
+ 
+## 4. Pengujian
+ 
+Semua pengujian dijalankan dari terminal **`alpha`**. Blok "ekspektasi" adalah hasil yang seharusnya muncul; tempelkan screenshot output aktual di bagian bertanda **[Screenshot]**.
+ 
+### 4.1 Reverse proxy Apache `penny` -> area vault
+ 
+**Uji respons HTTP (single request):**
+ 
+```bash
+curl -i http://penny.k54.com
+# atau lewat CNAME www:
+curl -i http://www.k54.com
+```
+ 
+Ekspektasi: status `HTTP/1.1 200 OK` dan isi halaman dari salah satu backend vault, yaitu `Response dari OBLADI (Vault 1)` atau `Response dari DESMOND (Vault 2)`.
+ 
+**[Screenshot]**
+ 
+**Uji load balancing (pergiliran backend):**
+ 
+```bash
+for i in {1..4}; do curl -s http://penny.k54.com; echo "-------------------"; done
+```
+ 
+Ekspektasi: jawaban bergantian antara `OBLADI (Vault 1)` dan `DESMOND (Vault 2)` (metode `byrequests`), sehingga dari 4 request muncul masing-masing backend dua kali.
+ 
+**[Screenshot]**
+ 
+### 4.2 Reverse proxy Nginx `abbey` -> area core
+ 
+**Uji respons HTTP (single request):**
+ 
+```bash
+curl -i http://abbey.k54.com
+# atau lewat CNAME static:
+curl -i http://static.k54.com
+```
+ 
+Ekspektasi: status `HTTP/1.1 200 OK` dan halaman `Selamat Datang di Beranda Core (...)` dengan `Server Hostname` `oblada` atau `molly`.
+ 
+**[Screenshot]**
+ 
+**Uji load balancing (pergiliran backend):**
+ 
+```bash
+for i in {1..4}; do curl -s http://abbey.k54.com; echo "-------------------"; done
+```
+ 
+Ekspektasi: `Server Hostname` bergantian antara `oblada` dan `molly` (round robin bawaan Nginx).
+ 
+**[Screenshot]**
+ 
+### 4.3 Uji header `Host` dan `X-Real-IP` (tambahan)
+ 
+Soal meminta bukti bahwa header diteruskan, sedangkan daftar pengujian di atas hanya membuktikan distribusi lalu lintas. Untuk `abbey`, buat halaman uji sementara di **`oblada`** dan **`molly`**:
+ 
+```bash
+cat << 'PHP' > /var/www/html/hdr.php
+<?php
+echo $_SERVER['HTTP_HOST'] . " | X-Real-IP: " . ($_SERVER['HTTP_X_REAL_IP'] ?? '-') . "\n";
+?>
+PHP
+```
+ 
+Lalu dari `alpha`:
+ 
+```bash
+curl http://abbey.k54.com/hdr
+```
+ 
+Ekspektasi: `abbey.k54.com | X-Real-IP: 192.238.4.2`. Host tetap `abbey.k54.com` dan X-Real-IP adalah IP asli `alpha`, bukan IP `abbey`.
+ 
+**[Screenshot]**
+ 
+Untuk `penny`, backend vault berupa halaman HTML statis sehingga header tidak tampil di respons. Cara memeriksanya: tambahkan di baris paling atas `/etc/nginx/http.d/default.conf` pada `obladi` atau `desmond`:
+ 
+```nginx
+log_format hdr '$remote_addr host=$host xrip=$http_x_real_ip';
+access_log /var/log/nginx/hdr.log hdr;
+```
+ 
+Muat ulang Nginx (`nginx -s reload`), jalankan `curl http://penny.k54.com` dari `alpha`, lalu `tail /var/log/nginx/hdr.log` di backend. Pada baris log, `host=` harus `penny.k54.com` dan `xrip=` harus `192.238.4.2`.
+ 
+**[Screenshot]**
+ 
 
       
 
