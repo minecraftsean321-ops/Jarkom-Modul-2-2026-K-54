@@ -1,4 +1,6 @@
-<img width="539" height="359" alt="Screenshot 2026-09-29 at 21 29 44" src="https://github.com/user-attachments/assets/359d9934-b202-48b7-a58d-a4e33323349e" /># Jarkom-Modul-2-2026-K-54
+<img width="539" height="359" alt="Screenshot 2026-09-29 at 21 29 44" src="https://github.com/user-attachments/assets/359d9934-b202-48b7-a58d-a4e33323349e" />  
+
+# Jarkom-Modul-2-2026-K-54  
 
 | Nama                 | NRP        |
 |----------------------|------------|
@@ -1537,8 +1539,175 @@ chmod +x /root/setup.sh && bash /root/setup.sh
    ```
    <img width="1062" height="190" alt="image" src="https://github.com/user-attachments/assets/ad9015a6-53df-45aa-86c4-ad0562a2ec5c" />
 
+# 11. Mengonfigurasi dua server Reverse Proxy sekaligus yaitu di node Penny dan Abbey
 
-   # 11. 
+Output yang diminta:
+1. penny (menggunakan Apache/httpd) -> mendistribusikan lalu lintas ke Area Vault (obladi & desmond).
+2. abbey (menggunakan Nginx) -> mendistribusikan lalu lintas ke Area Core (oblada & molly).
+3. Syarat Khusus: Kedua reverse proxy wajib meneruskan header Host dan X-Real-IP agar server backend mengetahui nama host dan IP asli dari pengunjung (client).
+
+## Langkah 1
+1. Lakukan konfigurasi di Node penny menggunakan script di bawah ini
+
+   ```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    
+    # 1. Hostname & Network Interface
+    hostname penny
+    echo "penny" > /etc/hostname
+    
+    cat << 'NET' > /etc/network/interfaces
+    auto lo
+    iface lo inet loopback
+    
+    auto eth0
+    iface eth0 inet static
+        address 192.238.3.2
+        netmask 255.255.255.0
+        gateway 192.238.3.1
+    NET
+    
+    ifup -a 2>/dev/null || true
+    
+    # 2. Resolver DNS
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.238.1.2
+    nameserver 192.238.1.3
+    options single-request
+    RESOLV
+    
+    # 3. Install Apache & Modul Proxy
+    apk update && apk add apache2 apache2-proxy curl
+    
+    # 4. Aktifkan Modul Proxy, Balancer, dan Headers pada httpd.conf
+    sed -i 's/#LoadModule proxy_module/LoadModule proxy_module/' /etc/apache2/httpd.conf
+    sed -i 's/#LoadModule proxy_http_module/LoadModule proxy_http_module/' /etc/apache2/httpd.conf
+    sed -i 's/#LoadModule proxy_balancer_module/LoadModule proxy_balancer_module/' /etc/apache2/httpd.conf
+    sed -i 's/#LoadModule lbmethod_byrequests_module/LoadModule lbmethod_byrequests_module/' /etc/apache2/httpd.conf
+    sed -i 's/#LoadModule slotmem_shm_module/LoadModule slotmem_shm_module/' /etc/apache2/httpd.conf
+    sed -i 's/#LoadModule headers_module/LoadModule headers_module/' /etc/apache2/httpd.conf
+    
+    # 5. Konfigurasi Reverse Proxy ke Area Vault (obladi & desmond)
+    cat << 'CONF' > /etc/apache2/conf.d/reverse-proxy.conf
+    <Proxy "balancer://vaultcluster">
+        BalancerMember "http://192.238.1.4:80"
+        BalancerMember "http://192.238.1.5:80"
+        ProxySet lbmethod=byrequests
+    </Proxy>
+    
+    # Forwarding Header Host & X-Real-IP
+    ProxyPreserveHost On
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+    
+    ProxyPass "/" "balancer://vaultcluster/"
+    ProxyPassReverse "/" "balancer://vaultcluster/"
+    CONF
+    
+    # 6. Restart Service Apache
+    pkill -9 httpd 2>/dev/null || true
+    sleep 1
+    httpd -k start
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+   ```
+
+## Langkah 2
+1. Konfigurasi node abbey menggunakan scripth di bawah ini
+
+   ```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    
+    # 1. Hostname & Network Interface
+    hostname abbey
+    echo "abbey" > /etc/hostname
+    
+    cat << 'NET' > /etc/network/interfaces
+    auto lo
+    iface lo inet loopback
+    
+    auto eth0
+    iface eth0 inet static
+        address 192.238.2.2
+        netmask 255.255.255.0
+        gateway 192.238.2.1
+    NET
+    
+    ifup -a 2>/dev/null || true
+    
+    # 2. Resolver DNS
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.238.1.2
+    nameserver 192.238.1.3
+    options single-request
+    RESOLV
+    
+    # 3. Install Nginx
+    apk update && apk add nginx curl
+    
+    mkdir -p /etc/nginx/http.d
+    
+    # 4. Konfigurasi Nginx Upstream & Forwarding Header ke Area Core (oblada & molly)
+    cat << 'NGINX' > /etc/nginx/http.d/default.conf
+    upstream core_cluster {
+        server 192.238.1.6:80;
+        server 192.238.1.7:80;
+    }
+    
+    server {
+        listen 80;
+        server_name abbey.k54.com static.k54.com;
+    
+        location / {
+            proxy_pass http://core_cluster;
+    
+            # Forwarding Header Host & X-Real-IP
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+    }
+    NGINX
+    
+    # 5. Restart Nginx
+    pkill -9 nginx 2>/dev/null || true
+    sleep 1
+    nginx
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+   ```
+
+## Langkah 3 
+1. Perbarui script Backend (Core) untuk menampilkan Header agaar terlihat jelas bahwa header Host dan X-Real-IP berhasil diteruskan.
+   Perbarui file `/var/www/html/index.php` di node abbey dan penny menggunakan scripth dibawah ini:
+
+   ```
+    cat << 'PHP' > /var/www/html/index.php
+    <?php
+    echo "<h1>Response dari Backend Core: " . gethostname() . "</h1>";
+    echo "<p>IP Backend: " . $_SERVER['SERVER_ADDR'] . "</p>";
+    echo "<p>Header Host: " . ($_SERVER['HTTP_HOST'] ?? 'N/A') . "</p>";
+    echo "<p>Header X-Real-IP (IP Asli Client): " . ($_SERVER['HTTP_X_REAL_IP'] ?? $_SERVER['REMOTE_ADDR']) . "</p>";
+    ?>
+    PHP
+   ```
+
+## Langkah 4: Pengujian
+
+1. Uji Reverse Proxy Penny
+   ```wget -qO- http://penny.k54.com/```
+
+   <img width="638" height="250" alt="image" src="https://github.com/user-attachments/assets/56b83a66-8cf0-4983-8067-7086a3e9889e" />
+
+2. Uji Reverse Proxy Abbey
+   ```wget -qO- http://abbey.k54.com/```
+
+   <img width="1061" height="59" alt="image" src="https://github.com/user-attachments/assets/c5150d84-9744-46b0-a5c8-f5b475e7a22e" />
+
+
 
 
 
