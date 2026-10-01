@@ -129,7 +129,7 @@ bash /root/setup.sh
 
 #### Langkah 3 - Aktifkan forwarding & NAT di `rootkit`
 
-> **Catatan:** bagian ini tidak terlihat pada screenshot, tetapi diperlukan agar node dapat meneruskan paket antar-subnet dan mengakses internet (ping ke `8.8.8.8` berhasil pada hasil uji). Sesuaikan jika kamu sudah mengaturnya dengan cara lain.
+> **Catatan:** bagian ini diperlukan agar node dapat meneruskan paket antar-subnet dan mengakses internet (ping ke `8.8.8.8` berhasil pada hasil uji).
 
 ```bash
 # Aktifkan IP forwarding
