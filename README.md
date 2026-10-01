@@ -2700,12 +2700,59 @@ Pengujian ke node yang lain:
 
 <img width="571" height="145" alt="image" src="https://github.com/user-attachments/assets/bc53b997-6ea4-421e-a4b4-23628d6ff1ee" />
 
+# 18. Menguji DNS Caching (TTL/Time To Live) dan Sinkronisasi DNS Master-Slave (Zone Transfer/SOA Serial)
 
+Tujuannya adalah membuktikan bahwa ketika record A diubah di DNS Server Master, client yang menyimpan cache DNS tidak langsung menerima IP baru sampai batas waktu TTL (15 detik) berakhir.
 
+## Langkah 1 
 
+1. Cek IP lama sebelum mengubah konfigurasi apapun.
 
+   ```dig abbey.k54.com```
 
+   <img width="1060" height="593" alt="image" src="https://github.com/user-attachments/assets/60f2e509-8894-45ba-b124-f63a27567c6a" />
 
+Karena dari hasil pengecekan terebut node pengembalikan node asli/lam, yaitu 192.238.2.2. Maka kita lanjut ke tahap selanjutnya.
+
+## Langkah 2 : Ubah Record & Naikkan Serial SOA di Node prab
+
+Buka terminal DNS Master, lalu edit file /var/bind/k54.com.zone sesuai dengan ketentuan dibawah ini:
+
+Lakukan 3 perubahan utama pada file tersebut:
+
+1. Naikkan nilai Serial SOA (misal dari 2026092901 menjadi 2026092902).
+2. Atur TTL khusus 15 detik pada record abbey.
+3. Ubah IP abbey ke IP fiktif (contoh: 192.238.2.99).
+
+Kondisi Sebelum: 
+
+<img width="1064" height="652" alt="image" src="https://github.com/user-attachments/assets/f09d5fb4-c4f4-4694-b5d7-99de80f3d16e" />
+
+Setelah dirubah: 
+
+<img width="1062" height="588" alt="image" src="https://github.com/user-attachments/assets/6876756c-382a-46d6-b31d-c01ad5eb2293" />
+
+Setelah itu restart service BIND di prab: 
+
+```
+pkill -9 named 2>/dev/null || true
+named -4 -u named
+```
+
+## Langkah 3: Pastikan DNS Slave (tedd) Tersinkronisasi
+
+Buka terminal node tedd, lalu jalankan restart BIND agar langsung menarik zone file terbaru di prab: 
+
+```
+pkill -9 named 2>/dev/null || true
+named -4 -u named
+```
+
+Tes query langsung ke tedd dari terminal alpha untuk membuktikan sinkronisasi berhasil: 
+
+```dig @192.238.1.3 abbey.k54.com```
+
+<img width="1059" height="627" alt="image" src="https://github.com/user-attachments/assets/4ae6139d-7f36-4dfe-a2ef-2caba559ba7e" />
 
  
  
