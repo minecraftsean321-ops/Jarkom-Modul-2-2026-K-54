@@ -2723,9 +2723,328 @@ Ekspektasi: baris log terbaru di backend berawalan 192.238.5.2.
 
 <img width="540" height="58" alt="Screenshot 2026-10-01 at 00 12 15" src="https://github.com/user-attachments/assets/f30953f1-6890-4c9d-baa7-a0569cdc1dbc" />
 
+Soal 15: Jalur Proxy Khusus `/eternal` (PHP) & `/orion` (Statis)
+ 
+---
+ 
+## 1. Deskripsi Soal
+ 
+Rootkit menginstruksikan pembuatan jalur *proxy* khusus yang berdiri sendiri:
+ 
+- Pada **`penny`**: buat *reverse proxy* untuk path **`/eternal`** yang menyajikan direktori **`/var/www/eternal`**, dan pastikan path ini dapat **mengeksekusi (rendering) file PHP**.
+- Pada **`abbey`**: buat jalur **`/orion`** yang menyajikan direktori **`/var/www/orion`**, **secara murni statis** tanpa perlu *rendering* PHP.
+## 2. Rencana
+ 
+| Gerbang | Path | Direktori | PHP | Cara kerja |
+|---|---|---|---|---|
+| `penny` (Apache) | `/eternal` | `/var/www/eternal` | Dirender | `ProxyPass /eternal !` (dikecualikan dari balancer) + `Alias` + `proxy_fcgi` ke PHP-FPM `127.0.0.1:9000` |
+| `abbey` (Nginx) | `/orion` | `/var/www/orion` | Tidak ada | `location /orion` dengan `alias`, tanpa handler PHP |
 
+ 
+## 3. Langkah Pengerjaan
+ 
+### Langkah 1 - Konfigurasi `penny` (`/eternal` dengan PHP rendering)
+ 
+Jalankan di terminal `penny`:
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. JARINGAN & HOSTNAME ---
+NAME="penny"
+IP="192.238.3.2"
+GW="192.238.3.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL APACHE, PHP-FPM & UTILITIES ---
+apk update && apk add apache2 apache2-proxy apache2-utils php php-fpm
+ 
+# Aktifkan modul Apache wajib di httpd.conf
+# (path file terpotong di screenshot, diasumsikan /etc/apache2/httpd.conf)
+sed -i 's/#LoadModule rewrite_module/LoadModule rewrite_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule alias_module/LoadModule alias_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule proxy_module/LoadModule proxy_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule proxy_http_module/LoadModule proxy_http_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule proxy_balancer_module/LoadModule proxy_balancer_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule lbmethod_byrequests_module/LoadModule lbmethod_byrequests_module/' /etc/apache2/httpd.conf
+sed -i 's/#LoadModule slotmem_shm_module/LoadModule slotmem_shm_module/' /etc/apache2/httpd.conf
+ 
+# --- 3. DOKUMEN DIREKTORI /var/www/eternal (SOAL 15) ---
+mkdir -p /var/www/eternal
+cat << 'PHP' > /var/www/eternal/index.php
+<?php
+echo "<h1>Response dari Penny /eternal (PHP Rendered)</h1>";
+echo "<p>PHP Version: " . phpversion() . "</p>";
+?>
+PHP
+ 
+# --- 4. BASIC AUTHENTICATION (SOAL 12) ---
+htpasswd -c -b /etc/apache2/.htpasswd prabs 'pakar_pinter_jadi_gob***'
+ 
+# --- 5. KONFIGURASI VIRTUALHOST (SOAL 11, 12, 13, 15) ---
+rm -f /etc/apache2/conf.d/default.conf /etc/apache2/conf.d/vault-proxy.conf
+ 
+cat << 'PROXY' > /etc/apache2/conf.d/vault-proxy.conf
+# Load modul FCGI eksplisit
+LoadModule proxy_fcgi_module /usr/lib/apache2/mod_proxy_fcgi.so
+ 
+<VirtualHost *:80>
+    ServerName www.k54.com
+    ServerAlias penny.k54.com 192.238.3.2
+ 
+    # --- SOAL 13: redirect 301 jika Host bukan www.k54.com ---
+    RewriteEngine On
+    RewriteCond %{HTTP_HOST} !^www\.k54\.com$ [NC]
+    RewriteRule ^/(.*)$ http://www.k54.com/$1 [R=301,L]
+ 
+    # --- SOAL 12: proteksi basic auth /admin ---
+    <Location /admin>
+        AuthType Basic
+        AuthName "Restricted Admin Area"
+        AuthUserFile /etc/apache2/.htpasswd
+        Require valid-user
+    </Location>
+ 
+    # --- SOAL 15: path /eternal lokal dengan PHP rendering ---
+    ProxyPass /eternal !
+    Alias /eternal /var/www/eternal
+ 
+    <Directory /var/www/eternal>
+        Options Indexes FollowSymLinks
+        AllowOverride All
+        Require all granted
+        DirectoryIndex index.php index.html
+        <FilesMatch \.php$>
+            SetHandler "proxy:fcgi://127.0.0.1:9000"
+        </FilesMatch>
+    </Directory>
+ 
+    # --- SOAL 11: load balancer vault area ---
+    <Proxy balancer://vaultcluster>
+        BalancerMember http://192.238.1.4:80 retry=0
+        BalancerMember http://192.238.1.5:80 retry=0
+        ProxySet lbmethod=byrequests
+    </Proxy>
+ 
+    ProxyPreserveHost On
+    RequestHeader set X-Real-IP "%{REMOTE_ADDR}s"
+ 
+    ProxyPass / balancer://vaultcluster/
+    ProxyPassReverse / balancer://vaultcluster/
+</VirtualHost>
+PROXY
+ 
+# --- 6. KONFIGURASI & JALANKAN SERVICE PHP-FPM & APACHE2 ---
+mkdir -p /run/apache2 /run/php /var/log
+ 
+# Pastikan PHP-FPM listen di port 9000
+# (baris terpotong di screenshot, direkonstruksi)
+find /etc/php* -name "www.conf" -exec sed -i 's/listen = .*/listen = 127.0.0.1:9000/' {} \;
+ 
+pkill -9 httpd 2>/dev/null || true
+pkill -9 php-fpm 2>/dev/null || true
+sleep 1
+ 
+# Jalankan PHP-FPM
+PHP_FPM_BIN=$(which php-fpm || find /usr/sbin /usr/bin -name "php*fpm*" | head -n 1)
+if [ -n "$PHP_FPM_BIN" ]; then
+    $PHP_FPM_BIN -D 2>/dev/null || $PHP_FPM_BIN 2>/dev/null || true
+fi
+ 
+/usr/sbin/httpd -k start
+ 
+# --- 7. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+Poin penting konfigurasi:
+ 
+| Baris | Fungsi |
+|---|---|
+| `ProxyPass /eternal !` | Mengecualikan `/eternal` dari proxy sehingga tidak diteruskan ke `obladi`/`desmond`. Harus ditulis **sebelum** `ProxyPass /`. |
+| `Alias /eternal /var/www/eternal` | Memetakan URL `/eternal` ke direktori lokal. |
+| `SetHandler "proxy:fcgi://127.0.0.1:9000"` | Mengirim file `.php` ke PHP-FPM lewat FastCGI sehingga kode PHP dieksekusi, bukan ditampilkan mentah. |
+| `LoadModule proxy_fcgi_module ...` | Memuat modul FastCGI proxy yang dibutuhkan `SetHandler` di atas. |
+| `listen = 127.0.0.1:9000` (PHP-FPM) | Menyamakan alamat PHP-FPM dengan tujuan FastCGI di Apache. |
+ 
+### Langkah 2 - Konfigurasi `abbey` (`/orion` murni statis)
+ 
+Jalankan di terminal `abbey`:
+ 
+```bash
+cat << 'EOF' > /root/setup.sh
+#!/bin/bash
+ 
+# --- 1. JARINGAN & HOSTNAME ---
+NAME="abbey"
+IP="192.238.2.2"
+GW="192.238.2.1"
+ 
+hostname $NAME && echo "$NAME" > /etc/hostname
+ 
+cat << NET > /etc/network/interfaces
+auto lo
+iface lo inet loopback
+ 
+auto eth0
+iface eth0 inet static
+    address $IP
+    netmask 255.255.255.0
+    gateway $GW
+NET
+ 
+ifup -a 2>/dev/null || true
+ 
+cat << 'RESOLV' > /etc/resolv.conf
+nameserver 192.238.1.2
+nameserver 192.238.1.3
+nameserver 192.168.122.1
+RESOLV
+ 
+# --- 2. INSTALL NGINX ---
+apk update && apk add nginx
+ 
+# --- 3. DOKUMEN DIREKTORI /var/www/orion STATIS (SOAL 15) ---
+mkdir -p /var/www/orion
+cat << 'HTML' > /var/www/orion/index.html
+<h1>Response dari Abbey /orion (Murni Statis HTML)</h1>
+HTML
+ 
+# --- 4. KONFIGURASI PROXY & PATH STATIS (SOAL 11, 13, 15) ---
+mkdir -p /run/nginx
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+upstream corecluster {
+    server 192.238.1.6:80;
+    server 192.238.1.7:80;
+}
+ 
+# Redirect 302 (IP & abbey.k54.com -> static.k54.com) (Soal 13)
+server {
+    listen 80;
+    listen [::]:80;
+    server_name abbey.k54.com 192.238.2.2;
+ 
+    return 302 http://static.k54.com$request_uri;
+}
+ 
+# Domain kanonis (static.k54.com)
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name static.k54.com;
+ 
+    # SOAL 15: path /orion murni statis
+    location /orion {
+        alias /var/www/orion;
+        index index.html index.htm;
+    }
+ 
+    # SOAL 11: reverse proxy ke area core
+    location / {
+        proxy_pass http://corecluster;
+ 
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+NGINX
+ 
+# --- 5. JALANKAN SERVICE NGINX ---
+pkill -9 nginx 2>/dev/null || true
+sleep 1
+nginx
+ 
+# --- 6. AUTOSTART PERSISTENSI OPENRC ---
+mkdir -p /etc/local.d
+echo -e "#!/bin/sh\n/bin/bash /root/setup.sh" > /etc/local.d/setup.start
+chmod +x /etc/local.d/setup.start
+rc-update add local default 2>/dev/null || true
+EOF
+ 
+chmod +x /root/setup.sh && bash /root/setup.sh
+```
+ 
+Poin penting konfigurasi:
+ 
+- `location /orion { alias /var/www/orion; }` melayani file langsung dari disk. Blok ini lebih spesifik daripada `location /`, sehingga request `/orion` tidak diteruskan ke `oblada`/`molly`.
+- PHP **tidak dipasang** di `abbey` dan tidak ada handler `fastcgi_pass`, sehingga isi direktori disajikan apa adanya (statis).
+## 4. Pengujian
+ 
+Semua pengujian dijalankan dari terminal **`alpha`**. Blok "ekspektasi" adalah hasil yang seharusnya muncul; tempelkan screenshot output aktual di bagian bertanda **[Screenshot]**.
+ 
+### 4.1 Path `/eternal` di `penny` (PHP rendering)
+ 
+Memastikan `/eternal` disajikan dari direktori lokal `/var/www/eternal` di `penny` dan file PHP berhasil dieksekusi.
+ 
+```bash
+curl -i http://www.k54.com/eternal/
+```
+ 
+Ekspektasi:
+ 
+```text
+HTTP/1.1 200 OK
+Date: ...
+Server: Apache/2.4.68 (Unix)
+Content-Type: text/html; charset=UTF-8
+ 
+<h1>Response dari Penny /eternal (PHP Rendered)</h1>
+<p>PHP Version: 8.x.x</p>
+```
+ 
+Indikator lolos: status `200 OK`, dan body berisi **hasil** eksekusi PHP (termasuk nomor versi PHP), bukan teks mentah `<?php ... ?>`.
+ 
+<img width="536" height="123" alt="Screenshot 2026-10-01 at 02 48 02" src="https://github.com/user-attachments/assets/7b4b2c69-bdbe-4ea9-a615-d1b35c38ca0d" />
 
-
+ 
+### 4.2 Path `/orion` di `abbey` (murni statis)
+ 
+Memastikan `/orion` disajikan dari direktori lokal `/var/www/orion` di `abbey` secara statis tanpa PHP rendering.
+ 
+```bash
+curl -i http://static.k54.com/orion/
+```
+ 
+Ekspektasi:
+ 
+```text
+HTTP/1.1 200 OK
+Date: ...
+Server: nginx
+Content-Type: text/html
+ 
+<h1>Response dari Abbey /orion (Murni Statis HTML)</h1>
+```
+ 
+<img width="408" height="163" alt="Screenshot 2026-10-01 at 02 48 59" src="https://github.com/user-attachments/assets/0a44bfa8-0a01-4b33-a3d7-142305f10207" />
 
 
 
