@@ -2583,6 +2583,125 @@ Ekspektasi: `HTTP/1.1 200 OK` dan langsung memuat konten Core Area (`Selamat Dat
 <img width="1028" height="588" alt="image" src="https://github.com/user-attachments/assets/11ede348-ba1e-4a35-b79f-97ed93cf05d3" />
 <img width="1027" height="183" alt="image" src="https://github.com/user-attachments/assets/8027079e-f9b3-4265-bb73-05262709480b" />
 
+# 17. Menambahkan TXT Records pada DNS Master (prab) untuk 5 node client (alphat, beta, gamma, delta dan epsilon)
+Jadi ketika melakukan query DNS tipe TXT ke domain klien (misalnya alpha.k54.com), DNS server harus mengembalikan isi teks string berupa nama hostname-nya ("alpha").
+
+## Langkah 1 Perbarui Konfigurasi DNS Zone di node prab
+Buka terminal node prab, lalui perbarui scripth di /root/setup.sh menggunakan script dibawah ini.
+
+```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    
+    # 1. Network & Hostname
+    hostname prab
+    echo "prab" > /etc/hostname
+    
+    # 2. Install BIND9
+    apk update && apk add bind bind-tools
+    
+    mkdir -p /var/bind /etc/bind
+    
+    # 3. Konfigurasi named.conf
+    cat << 'NAMED' > /etc/bind/named.conf
+    options {
+        directory "/var/bind";
+        allow-query { any; };
+        auth-nxdomain no;
+        listen-on-v6 { none; };
+    };
+    
+    zone "k54.com" {
+        type master;
+        file "/var/bind/k54.com.zone";
+    };
+    NAMED
+    
+    # 4. File Zone DNS dengan TXT Record Klien (Soal 17)
+    cat << 'ZONE' > /var/bind/k54.com.zone
+    $TTL 86400
+    @   IN  SOA prab.k54.com. admin.k54.com. (
+            2026092901 ; Serial
+            3600       ; Refresh
+            1800       ; Retry
+            604800     ; Expire
+            86400 )    ; Minimum TTL
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    
+    ; Server Records
+    prab    IN  A   192.238.1.2
+    tedd    IN  A   192.238.1.3
+    obladi  IN  A   192.238.1.4
+    desmond IN  A   192.238.1.5
+    oblada  IN  A   192.238.1.6
+    molly   IN  A   192.238.1.7
+    penny   IN  A   192.238.3.2
+    abbey   IN  A   192.238.2.2
+    
+    ; CNAME Alias
+    www     IN  CNAME penny.k54.com.
+    static  IN  CNAME abbey.k54.com.
+    
+    ; Client A Records & TXT Records (Soal 17)
+    alpha   IN  A   192.238.1.8
+    alpha   IN  TXT "alpha"
+    
+    beta    IN  A   192.238.1.9
+    beta    IN  TXT "beta"
+    
+    gamma   IN  A   192.238.1.10
+    gamma   IN  TXT "gamma"
+    
+    delta   IN  A   192.238.2.3
+    delta   IN  TXT "delta"
+    
+    epsilon IN  A   192.238.3.3
+    epsilon IN  TXT "epsilon"
+    ZONE
+    
+    # 5. Restart BIND Service
+    pkill -9 named 2>/dev/null || true
+    sleep 1
+    named -4 -u named
+    
+    echo "DNS Master Prab berhasil dikonfigurasi dengan TXT Record Soal 17!"
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+<img width="1058" height="649" alt="image" src="https://github.com/user-attachments/assets/e08d0be8-a322-4c19-90ed-eb1a3bc2bcc4" />
+
+## Langkah 2: Pengujian Query TXT record dari Node alpha
+
+Buka terminal client, lalu jalankan perintah query DNS khusus tipe TXT:
+
+Opsi A : Menggunakan nslookup
+
+```nslookup -type=TXT alpha.k54.com```
+
+<img width="592" height="145" alt="image" src="https://github.com/user-attachments/assets/6eebdaa3-7d36-47f2-861d-adff7e53fe4f" />
+
+Opsi B : Menggunakan dig 
+
+```dig TXT alpha.k54.com +short```
+
+<img width="518" height="56" alt="image" src="https://github.com/user-attachments/assets/1491f6e3-0dcb-4576-bf57-214dcdd9e768" />
+
+Pengujian ke node yang lain: 
+
+<img width="582" height="141" alt="image" src="https://github.com/user-attachments/assets/2842964a-e8fa-4142-ae8c-dd8784306f0e" />
+
+<img width="554" height="146" alt="image" src="https://github.com/user-attachments/assets/9e47d20e-9af4-46b0-8983-62b70e421eac" />
+
+<img width="649" height="159" alt="image" src="https://github.com/user-attachments/assets/4b33f87c-6bbe-475d-87f9-d709baecd9a5" />
+
+<img width="571" height="145" alt="image" src="https://github.com/user-attachments/assets/bc53b997-6ea4-421e-a4b4-23628d6ff1ee" />
+
+
+
 
 
 
