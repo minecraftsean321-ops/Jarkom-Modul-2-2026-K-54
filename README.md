@@ -2551,5 +2551,42 @@ Ekspektasi: `HTTP/1.1 200 OK` dan langsung memuat konten Core Area (`Selamat Dat
  
 <img width="311" height="111" alt="Screenshot 2026-09-30 at 23 40 32" src="https://github.com/user-attachments/assets/52f943f9-00e9-4126-a1ed-7aadc6365bd6" />
 
+# 16. Melakukan stress testing (benchmark) menggunakan tools ApacheBench (ab) untuk menguji ketahanan dua gerbang reverse proxy
+
+## Langkah 1: Install Package `apache-utils` di Alpine Linux. 
+
+```apk update && apk add apache2-utils```
+
+<img width="1079" height="720" alt="image" src="https://github.com/user-attachments/assets/c7d9918d-4bf2-41e6-b35a-ad1bdc60be9e" />
+
+## Langkah 2: Jalankan stress test ke `[www.k54.com](https://www.k54.com)`
+
+```ab -n 250 -c 10 http://www.k54.com/``` 
+
+- ab: Perintah utama Apache HTTP server benchmarking tool.
+
+- -n 250: Jumlah total request (Number of requests) yang dikirimkan ke server, yaitu sebanyak 250 permintaan.
+
+- -c 10: Tingkat concurrency (jumlah permintaan simultan/serentak dalam satu waktu), yaitu 10 koneksi bersamaan.
+
+- [http://www.k54.com/](http://www.k54.com/): Endpoint target server yang diuji ketahanannya.
+
+<img width="1059" height="530" alt="image" src="https://github.com/user-attachments/assets/98813eda-5bc9-4ce1-b9e3-15932ddc21d5" />  
+<img width="1063" height="583" alt="image" src="https://github.com/user-attachments/assets/5c48bd51-ac9c-4ae6-af9f-5828c2b8e188" />  
+<img width="1061" height="289" alt="image" src="https://github.com/user-attachments/assets/c0868410-79f9-4f8d-94da-b2023a2855a1" />  
+
+## Langkah 3: Jalankan stress test ke 'static.k54.com`
+
+```ab -n 250 -c 10 http://static.k54.com/```
+
+<img width="1025" height="506" alt="image" src="https://github.com/user-attachments/assets/08966c7a-ea20-40de-8b0f-57d1698f4dcf" />
+<img width="1028" height="588" alt="image" src="https://github.com/user-attachments/assets/11ede348-ba1e-4a35-b79f-97ed93cf05d3" />
+<img width="1027" height="183" alt="image" src="https://github.com/user-attachments/assets/8027079e-f9b3-4265-bb73-05262709480b" />
+
+
+
+
+
+
  
  
