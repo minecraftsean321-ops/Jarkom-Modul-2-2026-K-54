@@ -3251,5 +3251,178 @@ Tes query langsung ke tedd dari terminal alpha untuk membuktikan sinkronisasi be
 
 <img width="1059" height="627" alt="image" src="https://github.com/user-attachments/assets/4ae6139d-7f36-4dfe-a2ef-2caba559ba7e" />
 
+# 19. Membuat CNAME Record (Alias) yang mengarahkan domain internal outbond.k54.com ke domain eksternal di internet, yaitu http.badssl.com.
+
+Dua kunci teknis utama pada BIND9 untuk soal ini:
+
+1. Titik Akhir (Trailing Dot) Wajib Ada:
+Di file zona BIND, penulisan FQDN eksternal wajib diakhiri dengan titik (http.badssl.com.). Jika tanpa titik, BIND akan menganggap nama domain tersebut sebagai nama relatif internal dan mengubahnya menjadi http.badssl.com.k54.com. (yang mana akan gagal / NXDOMAIN).
+
+2. DNS Forwarders (Rekursi Internet):
+Saat alpha melakukan curl [http://outbound.k54.com](http://outbound.k54.com), DNS server (prab/tedd) harus tahu cara mencari IP dari http.badssl.com. Oleh karena itu, kita menambahkan opsi forwarders di named.conf agar BIND bisa meneruskan query domain luar ke DNS publik (seperti 8.8.8.8 atau IP Gateway NAT).
+
+## Langkah 1: Perbarui konfigurasi di Master (prab) 
+Buka terminal prab dan masukkan scripth di bawah ini:
+
+```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    hostname prab
+    echo "prab" > /etc/hostname
+    
+    # Resolver internet sementara
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.168.122.1
+    nameserver 8.8.8.8
+    RESOLV
+    
+    apk add --no-cache bind bind-tools
+    
+    mkdir -p /var/bind /etc/bind
+    
+    # named.conf dengan opsi Forwarders ke Internet
+    cat << 'NAMED' > /etc/bind/named.conf
+    options {
+        directory "/var/bind";
+        allow-query { any; };
+        allow-transfer { 192.238.1.3; };
+        notify yes;
+        also-notify { 192.238.1.3; };
+        forwarders {
+            192.168.122.1;
+            8.8.8.8;
+        };
+        recursion yes;
+        listen-on-v6 { none; };
+    };
+    
+    zone "k54.com" {
+        type master;
+        file "/var/bind/k54.com.zone";
+    };
+    NAMED
+    
+    # File Zona dengan CNAME outbound.k54.com -> http.badssl.com.
+    cat << 'ZONE' > /var/bind/k54.com.zone
+    $TTL 86400
+    @   IN  SOA prab.k54.com. admin.k54.com. (
+            2026100120 ; Serial SOA Wajib Naik
+            3600
+            1800
+            604800
+            86400 )
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    
+    prab    IN  A   192.238.1.2
+    tedd    IN  A   192.238.1.3
+    obladi  IN  A   192.238.1.4
+    desmond IN  A   192.238.1.5
+    oblada  IN  A   192.238.1.6
+    molly   IN  A   192.238.1.7
+    penny   IN  A   192.238.3.2
+    
+    abbey   15  IN  A   192.238.2.99
+    
+    www     IN  CNAME penny.k54.com.
+    static  IN  CNAME abbey.k54.com.
+    
+    ; SOAL 19: CNAME RECORD KE DOMAIN EKSTERNAL (Pakai Titik di Akhir)
+    outbound IN CNAME http.badssl.com.
+    
+    alpha   IN  A   192.238.1.8
+    alpha   IN  TXT "alpha"
+    ZONE
+    
+    chown -R named:named /var/bind /etc/bind
+    chmod -R 775 /var/bind
+    
+    pkill -9 named 2>/dev/null || true
+    sleep 1
+    named -4 -u named
+    
+    echo "Master Prab Siap dengan CNAME Outbound!"
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+## Langkah 2: Perbarui konfigurasi di Slave (tedd)
+
+Buka terminal node tedd, dan masukkan script ini: 
+
+```
+    cat << 'EOF' > /root/setup.sh
+    #!/bin/bash
+    hostname tedd
+    echo "tedd" > /etc/hostname
+    
+    cat << 'RESOLV' > /etc/resolv.conf
+    nameserver 192.168.122.1
+    nameserver 8.8.8.8
+    RESOLV
+    
+    apk add --no-cache bind bind-tools
+    
+    mkdir -p /var/bind /etc/bind
+    
+    cat << 'NAMED' > /etc/bind/named.conf
+    options {
+        directory "/var/bind";
+        allow-query { any; };
+        allow-notify { 192.238.1.2; };
+        forwarders {
+            192.168.122.1;
+            8.8.8.8;
+        };
+        recursion yes;
+        listen-on-v6 { none; };
+    };
+    
+    zone "k54.com" {
+        type slave;
+        file "/var/bind/k54.com.zone";
+        masters { 192.238.1.2; };
+    };
+    NAMED
+    
+    pkill -9 named 2>/dev/null || true
+    rm -rf /var/bind/* 2>/dev/null || true
+    mkdir -p /var/bind
+    chown -R named:named /var/bind /etc/bind
+    chmod -R 775 /var/bind
+    
+    sleep 1
+    named -4 -u named
+    
+    echo "Slave Tedd Siap!"
+    EOF
+    
+    chmod +x /root/setup.sh && bash /root/setup.sh
+```
+
+## Langkah 3: Pengujian 
+
+1. Uji Lookup DNS (dig) di node Alpha
+
+   ```dig outbound.k54.com```
+
+   <img width="1061" height="615" alt="image" src="https://github.com/user-attachments/assets/2393cc57-084f-4f9f-b426-ed24f3f09961" />
+
+2. Uji HTTP Content (curl)
+
+   ```curl http://outbound.k54.com```
+
+   <img width="1059" height="611" alt="image" src="https://github.com/user-attachments/assets/1638c4b0-0da1-4455-a49f-6f15da171518" />  
+   <img width="1064" height="156" alt="image" src="https://github.com/user-attachments/assets/00ceef57-0522-4523-a97a-1ff9c73a716e" />
+
+
+
+   
+
+
+   
+
  
  
