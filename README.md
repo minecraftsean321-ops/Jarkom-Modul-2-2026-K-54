@@ -3418,8 +3418,77 @@ Buka terminal node tedd, dan masukkan script ini:
    <img width="1064" height="156" alt="image" src="https://github.com/user-attachments/assets/00ceef57-0522-4523-a97a-1ff9c73a716e" />
 
 
+# 20. Pembuktian kalau server DNS sudah stabil untuk digunakan
 
-   
+Ada dua poin utama yang dituntut pada soal ini:   
+1. Revert Soal 18: Mengembalikan rekor abbey ke kondisi awal (IP 192.238.2.2 dengan nilai TTL default), membuang IP fiktif dan TTL 15 detik.
+2. Autostart Service: Memastikan service BIND9 (named) langsung berjalan otomatis ketika node GNS3 di-restart, tanpa perlu mengetik perintah jalan manual lagi.
+
+## Langkah 1: Normalkan lagi file Zona di Master (prab)
+Buka terminal lalu rubah file Zona yang telah dimodifikasi di soal no 18 menjadi seperti perintah di bawah ini:
+
+```
+    cat << 'ZONE' > /var/bind/k54.com.zone
+    $TTL 86400
+    @   IN  SOA prab.k54.com. admin.k54.com. (
+            2026100150 ; Serial SOA dinaikkan lagi agar mutlak sinkron
+            3600
+            1800
+            604800
+            86400 )
+    
+    @       IN  NS  prab.k54.com.
+    @       IN  NS  tedd.k54.com.
+    
+    prab    IN  A   192.238.1.2
+    tedd    IN  A   192.238.1.3
+    obladi  IN  A   192.238.1.4
+    desmond IN  A   192.238.1.5
+    oblada  IN  A   192.238.1.6
+    molly   IN  A   192.238.1.7
+    penny   IN  A   192.238.3.2
+    
+    ; SOAL 20: KEMBALI NORMAL
+    abbey   IN  A   192.238.2.2
+    
+    www     IN  CNAME penny.k54.com.
+    static  IN  CNAME abbey.k54.com.
+    outbound IN CNAME http.badssl.com.
+    
+    alpha   IN  A   192.238.1.8
+    alpha   IN  TXT "alpha"
+    ZONE
+    
+    # Pastikan hak akses benar dan restart service
+    chown named:named /var/bind/k54.com.zone
+    pkill -9 named 2>/dev/null || true
+    named -4 -u named
+```
+
+## Langkah 2: Daftarkan Autostart Service di prab dan tedd
+
+Agar service BIND9 langsung hidup saat kontainer Alpine menyala, gunakan perintah bawaan OpenRC Alpine.
+
+Jalankan perintah di bawah ini di prab dan tedd.
+
+```echo "    up named -4 -u named &" >> /etc/network/interfaces```
+
+## Pembuktian
+
+1. Coba matikan dan nyalakan node
+2. Buktikan service Langsung Jalan tanpa Diketik Manual
+
+   ```ps aux | grep named```
+
+   <img width="1069" height="111" alt="image" src="https://github.com/user-attachments/assets/74d14aab-d445-46f6-8767-0fe5d8c544fe" />
+
+   Harusnya akan muncul proses ```named -4 -u named``` yang membuktikan bahwa DNS sudah autostart.
+
+4. Buka terminal di node alpha, lalu lakukan query ke abbey untuk membuktikan bahwa file Zone sudah kembali normal
+
+   ```dig abbey.k54.com```
+
+   <img width="1060" height="600" alt="image" src="https://github.com/user-attachments/assets/3174bc4c-e5e2-4f78-b826-f79b2b10df45" />
 
 
    
