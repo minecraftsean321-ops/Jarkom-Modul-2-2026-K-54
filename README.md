@@ -2551,6 +2551,184 @@ Ekspektasi: `HTTP/1.1 200 OK` dan langsung memuat konten Core Area (`Selamat Dat
  
 <img width="311" height="111" alt="Screenshot 2026-09-30 at 23 40 32" src="https://github.com/user-attachments/assets/52f943f9-00e9-4126-a1ed-7aadc6365bd6" />
 
+Soal 14: Real IP Logging di Backend
+
+1. Deskripsi Soal
+
+Di dalam The Mesh, rekam jejak tidak boleh dipalsukan oleh sistem. Pastikan access log pada setiap server web di area vault maupun area core mencatat IP asli milik client (pengunjung) yang diteruskan oleh gerbang, dan bukan mencatat IP dari penny ataupun abbey.
+
+2. Rencana
+Masalah
+
+Karena semua request melewati reverse proxy, koneksi yang diterima backend selalu berasal dari IP gerbang. Tanpa konfigurasi tambahan, access.log mencatat IP gerbang:
+
+Jalur	IP yang tercatat di log (sebelum Soal 14)
+alpha -> penny -> obladi/desmond	192.238.3.2 (penny)
+alpha -> abbey -> oblada/molly	192.238.2.2 (abbey)
+Solusi
+
+Backend memakai modul realip Nginx: IP koneksi diganti dengan IP asli yang dibaca dari header X-Forwarded-For, selama koneksi datang dari alamat yang dipercaya.
+
+Gerbang	Cara gerbang membawa IP klien ke backend
+abbey (Nginx)	proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; 
+penny (Apache)	mod_proxy menambahkan X-Forwarded-For otomatis (ProxyAddHeaders On adalah bawaan)
+
+Header X-Forwarded-For dipilih karena dikirim oleh kedua gerbang tanpa konfigurasi tambahan.
+
+Tiga direktif yang ditambahkan di backend:
+
+Direktif	Fungsi
+set_real_ip_from 192.238.0.0/16;	Daftar alamat proxy yang dipercaya; header hanya dipakai jika koneksi berasal dari rentang ini.
+real_ip_header X-Forwarded-For;	Header yang dibaca untuk mengambil IP klien.
+real_ip_recursive on;	Menelusuri isi header dari kanan dan melewati alamat tepercaya, sehingga yang dipakai adalah alamat tidak tepercaya terakhir (klien).
+3. Langkah Pengerjaan
+Langkah 1 - Pastikan gerbang meneruskan IP klien
+
+Tidak ada perubahan di penny maupun abbey. Konfigurasi dari Soal 11-13 sudah cukup.
+
+Langkah 2 - Tambah 3 baris realip di keempat backend
+
+Tambahkan di dalam blok server { ... } pada /etc/nginx/http.d/default.conf di obladi, desmond, oblada, dan molly. Cara paling aman adalah mengubah bagian cat << 'NGINX' di /root/setup.sh masing-masing node.
+
+obladi dan desmond (area vault):
+
+bash
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    # --- SOAL 14: REAL IP LOGGING ---
+    set_real_ip_from 192.238.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    root /var/www/html;
+    index index.html index.htm;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+NGINX
+
+oblada dan molly (area core). Ganti oblada.k54.com dengan molly.k54.com di molly:
+
+bash
+cat << 'NGINX' > /etc/nginx/http.d/default.conf
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name core.k54.com oblada.k54.com;
+
+    # --- SOAL 14: REAL IP LOGGING ---
+    set_real_ip_from 192.238.0.0/16;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    root /var/www/html;
+    index index.php index.html;
+
+    # URL Rewrite (Clean URL)
+    location / {
+        try_files $uri $uri/ $uri.php?$args;
+    }
+
+    # Handler PHP-FPM
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+}
+NGINX
+
+Di screenshot hanya tiga baris realip yang ditunjukkan, tanpa posisi persisnya. Saya menaruhnya di dalam server { } sebelum root. Direktif ini juga valid di konteks http, jadi posisi lain tetap bekerja.
+
+Langkah 3 - Terapkan konfigurasi
+
+Jalankan ulang skrip (ia me-restart Nginx sendiri):
+
+bash
+bash /root/setup.sh
+
+Atau, jika hanya default.conf yang diubah manual:
+
+bash
+nginx -t && nginx -s reload
+Langkah 4 - Verifikasi modul realip (opsional)
+bash
+nginx -V 2>&1 | grep -o with-http_realip_module
+
+Ekspektasi: muncul with-http_realip_module. Jika kosong, nginx -t akan menolak direktif set_real_ip_from.
+
+4. Pengujian
+
+Blok "ekspektasi" di bawah adalah hasil yang seharusnya muncul. Tempelkan screenshot output aktual di bagian bertanda [Screenshot].
+
+Pengujian memakai www.k54.com dan static.k54.com (nama kanonis) karena sejak Soal 13 akses lewat penny.k54.com dan abbey.k54.com dialihkan dengan redirect.
+
+4.1 Uji area vault (penny -> obladi / desmond)
+
+a. Kirim request dari klien (alpha). Karena balancer bergantian antar backend, kirim beberapa kali agar kedua backend menerima request:
+
+bash
+curl -s http://www.k54.com
+curl -s http://www.k54.com
+
+b. Cek access log di obladi atau desmond:
+
+bash
+tail -n 5 /var/log/nginx/access.log
+
+Ekspektasi: kolom pertama setiap baris adalah IP asli alpha, bukan IP penny:
+
+text
+192.238.4.2 - - [tanggal waktu] "GET / HTTP/1.1" 200 ... "-" "curl/..."
+
+Jika konfigurasi belum berlaku, kolom pertama berisi 192.238.3.2 (penny).
+
+<img width="540" height="43" alt="Screenshot 2026-10-01 at 00 12 35" src="https://github.com/user-attachments/assets/43274854-0e08-43be-8f0c-357fb5960a48" />
+
+4.2 Uji area core (abbey -> oblada / molly)
+
+a. Kirim request dari klien (alpha):
+
+bash
+curl -s http://static.k54.com
+curl -s http://static.k54.com
+
+b. Cek access log di oblada atau molly:
+
+bash
+tail -n 5 /var/log/nginx/access.log
+
+Ekspektasi: kolom pertama adalah 192.238.4.2 (IP alpha), bukan 192.238.2.2 (abbey).
+
+text
+192.238.4.2 - - [tanggal waktu] "GET / HTTP/1.1" 200 ... "-" "curl/..."
+
+<img width="541" height="44" alt="Screenshot 2026-10-01 at 00 13 21" src="https://github.com/user-attachments/assets/b469c875-7f9b-4a31-b9d5-757fa3c1d7a6" />
+
+4.3 Uji dari klien lain (tambahan)
+
+Untuk menunjukkan log benar-benar mengikuti IP pengunjung, ulangi dari klien di subnet berbeda (mis. delta, 192.238.5.2):
+
+bash
+curl -s http://www.k54.com
+curl -s http://static.k54.com
+
+Ekspektasi: baris log terbaru di backend berawalan 192.238.5.2.
+
+<img width="540" height="58" alt="Screenshot 2026-10-01 at 00 12 15" src="https://github.com/user-attachments/assets/f30953f1-6890-4c9d-baa7-a0569cdc1dbc" />
+
+
+
+
+
+
+
 # 16. Melakukan stress testing (benchmark) menggunakan tools ApacheBench (ab) untuk menguji ketahanan dua gerbang reverse proxy
 
 ## Langkah 1: Install Package `apache-utils` di Alpine Linux. 
